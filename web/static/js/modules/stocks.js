@@ -249,31 +249,54 @@ export async function loadHotAreas() {
  */
 export async function loadStocks() {
     const tbody = document.getElementById('stocks-tbody');
-    tbody.innerHTML = '<tr><td colspan="7" class="loading">正在加载股票列表...</td></tr>';
-    
+    tbody.innerHTML = '<tr><td colspan="8" class="loading">正在加载股票列表...</td></tr>';
+
     try {
         let allStocks = [];
         let page = 1;
         let totalPages = 1;
-        
+
         // 分页获取所有股票
         do {
             const response = await fetch(`/api/stocks?page=${page}&per_page=500`);
             const result = await response.json();
-            
+
             if (result.success) {
                 allStocks = allStocks.concat(result.data);
                 totalPages = result.total_pages;
-                tbody.innerHTML = `<tr><td colspan="7" class="loading">已加载 ${allStocks.length} / ${result.total} 只股票...</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="8" class="loading">已加载 ${allStocks.length} / ${result.total} 只股票...</td></tr>`;
                 page++;
             } else {
                 break;
             }
         } while (page <= totalPages);
-        
+
+        await loadFavoriteCodes();
         renderStocks(allStocks);
+        loadFavoriteGroupOptions();
     } catch (error) {
-        tbody.innerHTML = `<tr><td colspan="7" class="loading">加载失败: ${error.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="loading">加载失败: ${error.message}</td></tr>`;
+    }
+}
+
+/**
+ * 已在自选股中的代码集合，用于标记行内按钮状态
+ */
+const favoriteCodes = new Set();
+
+/**
+ * 加载已自选股票代码集合
+ */
+async function loadFavoriteCodes() {
+    try {
+        const response = await fetch('/api/stock/favorites');
+        const result = await response.json();
+        favoriteCodes.clear();
+        if (result.success) {
+            (result.data || []).forEach(item => favoriteCodes.add(item.stock_code));
+        }
+    } catch (error) {
+        console.error('加载自选股状态失败:', error);
     }
 }
 
@@ -283,28 +306,39 @@ export async function loadStocks() {
  */
 export function renderStocks(stocks) {
     const tbody = document.getElementById('stocks-tbody');
-    
+
     if (stocks.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="loading">暂无数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="loading">暂无数据</td></tr>';
         return;
     }
-    
-    tbody.innerHTML = stocks.map(stock => `
-        <tr>
+
+    tbody.innerHTML = stocks.map(stock => {
+        const added = favoriteCodes.has(stock.code);
+        return `
+        <tr data-code="${stock.code}">
+            <td class="col-check"><input type="checkbox" class="stock-select-checkbox" value="${stock.code}" data-name="${escapeAttr(stock.name)}"></td>
             <td><strong>${stock.code}</strong></td>
             <td>${stock.name}</td>
             <td>¥${stock.latest_price}</td>
             <td>${stock.latest_date}</td>
             <td>${stock.market_cap}</td>
             <td>${stock.data_count}</td>
-            <td>
+            <td class="col-ops">
                 <button class="btn btn-secondary" onclick="viewStockDetail('${stock.code}')">
                     查看
                 </button>
+                <button class="btn fav-add-btn ${added ? 'btn-added' : 'btn-primary'}"
+                        data-code="${stock.code}" data-name="${escapeAttr(stock.name)}"
+                        ${added ? 'disabled' : ''}>
+                    ${added ? '已自选' : '加自选'}
+                </button>
             </td>
         </tr>
-    `).join('');
-    
+    `;}).join('');
+
+    setupStockSelection();
+    setupFavoriteButtons();
+
     // 搜索功能
     document.getElementById('stock-search').addEventListener('input', (e) => {
         const keyword = e.target.value.toLowerCase();
@@ -313,8 +347,254 @@ export function renderStocks(stocks) {
             const text = row.textContent.toLowerCase();
             row.style.display = text.includes(keyword) ? '' : 'none';
         });
+        updateSelectedCount();
     });
 }
+
+/**
+ * 绑定行内"加自选"按钮（委托，避免 5000+ 行逐个绑定）
+ */
+function setupFavoriteButtons() {
+    const tbody = document.getElementById('stocks-tbody');
+    if (tbody.dataset.favBound === '1') return;
+    tbody.dataset.favBound = '1';
+    tbody.addEventListener('click', (e) => {
+        const btn = e.target.closest('.fav-add-btn');
+        if (btn && !btn.disabled) {
+            addStockToFavorite(btn);
+        }
+    });
+}
+
+/**
+ * 将单只股票加入自选股
+ * 目标分组取工具栏下拉框当前选项；未选择分组时加入"未分组收藏"
+ * @param {HTMLElement} btn - 行内按钮
+ */
+async function addStockToFavorite(btn) {
+    const code = btn.dataset.code;
+    const name = btn.dataset.name || '';
+    const select = document.getElementById('favorite-group-select');
+    const groupId = select && !select.disabled ? select.value : '';
+
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '加入中...';
+    try {
+        let response;
+        if (groupId) {
+            response = await fetch(`/api/stock/group/${groupId}/stocks`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stocks: [{ code, name }] })
+            });
+        } else {
+            response = await fetch('/api/stock/favorite', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stock_code: code })
+            });
+        }
+        const result = await response.json();
+        if (result.success) {
+            favoriteCodes.add(code);
+            btn.textContent = '已自选';
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-added');
+            loadFavoriteGroupOptions();
+        } else {
+            alert('加入自选股失败: ' + (result.error || ''));
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    } catch (error) {
+        alert('加入自选股失败: ' + error.message);
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+/**
+ * HTML 属性转义
+ * @param {string} value
+ * @returns {string}
+ */
+function escapeAttr(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+/**
+ * 绑定股票多选逻辑
+ */
+function setupStockSelection() {
+    const tbody = document.getElementById('stocks-tbody');
+    const selectAll = document.getElementById('stock-select-all');
+
+    tbody.querySelectorAll('.stock-select-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateSelectedCount);
+    });
+
+    // 全选可见（复用于表头与工具栏）
+    const toggleVisible = (checked) => {
+        const rows = tbody.querySelectorAll('tr');
+        rows.forEach(row => {
+            if (row.style.display === 'none') return;
+            const cb = row.querySelector('.stock-select-checkbox');
+            if (cb) cb.checked = checked;
+        });
+        updateSelectedCount();
+    };
+
+    if (selectAll) {
+        selectAll.onchange = () => {
+            toggleVisible(selectAll.checked);
+            const theadCheck = document.getElementById('stocks-thead-check');
+            if (theadCheck) theadCheck.checked = selectAll.checked;
+        };
+    }
+    const theadCheck = document.getElementById('stocks-thead-check');
+    if (theadCheck) {
+        theadCheck.onchange = () => {
+            toggleVisible(theadCheck.checked);
+            if (selectAll) selectAll.checked = theadCheck.checked;
+        };
+    }
+
+    updateSelectedCount();
+}
+
+/**
+ * 更新已选股票数量
+ */
+function updateSelectedCount() {
+    const count = document.querySelectorAll('#stocks-tbody .stock-select-checkbox:checked').length;
+    const el = document.getElementById('stock-selected-count');
+    if (el) el.textContent = count;
+}
+
+/**
+ * 获取当前选中的股票列表
+ * @returns {Array<{code: string, name: string}>}
+ */
+function getSelectedStocks() {
+    return Array.from(document.querySelectorAll('#stocks-tbody .stock-select-checkbox:checked'))
+        .map(cb => ({ code: cb.value, name: cb.dataset.name || '' }));
+}
+
+/**
+ * 加载分组下拉选项
+ */
+export async function loadFavoriteGroupOptions() {
+    const select = document.getElementById('favorite-group-select');
+    if (!select) return;
+    try {
+        const previous = select.value;
+        const response = await fetch('/api/stock/groups');
+        const result = await response.json();
+        if (!result.success) return;
+        const groups = result.groups || [];
+        if (groups.length === 0) {
+            select.innerHTML = '<option value="">（暂无分组，请先新建）</option>';
+            select.disabled = true;
+            return;
+        }
+        select.disabled = false;
+        select.innerHTML = '<option value="">未分组（仅收藏）</option>'
+            + groups.map(g => `<option value="${g.id}">${escapeAttr(g.name)} (${g.member_count})</option>`).join('');
+        if (previous && groups.some(g => String(g.id) === previous)) {
+            select.value = previous;
+        }
+    } catch (error) {
+        console.error('加载分组选项失败:', error);
+    }
+}
+
+/**
+ * 将选中的股票加入所选分组
+ */
+window.addSelectedToGroup = async function() {
+    const select = document.getElementById('favorite-group-select');
+    const groupId = select ? select.value : '';
+    if (!groupId) {
+        alert('请先选择一个分组（或点击"新建分组"）');
+        return;
+    }
+    const stocks = getSelectedStocks();
+    if (stocks.length === 0) {
+        alert('请先勾选要加入的股票');
+        return;
+    }
+    const btn = document.getElementById('add-to-group-btn');
+    if (btn) btn.disabled = true;
+    try {
+        const response = await fetch(`/api/stock/group/${groupId}/stocks`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stocks })
+        });
+        const result = await response.json();
+        if (result.success) {
+            alert(`已加入分组，新增 ${result.added} 只股票` + (result.skipped ? `，${result.skipped} 只代码无效已跳过` : ''));
+            const boxes = document.querySelectorAll('#stocks-tbody .stock-select-checkbox');
+            boxes.forEach(cb => {
+                cb.checked = false;
+                if (favoriteCodes.has(cb.value)) return;
+                // 同步行内按钮为"已自选"
+                const row = cb.closest('tr');
+                const btn = row ? row.querySelector('.fav-add-btn') : null;
+                if (btn && !btn.disabled) {
+                    favoriteCodes.add(cb.value);
+                    btn.textContent = '已自选';
+                    btn.classList.remove('btn-primary');
+                    btn.classList.add('btn-added');
+                    btn.disabled = true;
+                }
+            });
+            const selectAll = document.getElementById('stock-select-all');
+            if (selectAll) selectAll.checked = false;
+            const theadCheck = document.getElementById('stocks-thead-check');
+            if (theadCheck) theadCheck.checked = false;
+            updateSelectedCount();
+            loadFavoriteGroupOptions();
+        } else {
+            alert('加入分组失败: ' + (result.error || ''));
+        }
+    } catch (error) {
+        alert('加入分组失败: ' + error.message);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+};
+
+/**
+ * 在全量股票页快速新建分组
+ */
+window.promptCreateGroupFromStocks = async function() {
+    const name = prompt('请输入新分组名称：');
+    if (!name || !name.trim()) return;
+    try {
+        const response = await fetch('/api/stock/group', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name.trim() })
+        });
+        const result = await response.json();
+        if (result.success) {
+            await loadFavoriteGroupOptions();
+            const select = document.getElementById('favorite-group-select');
+            if (select) select.value = String(result.group_id);
+        } else {
+            alert('新建分组失败: ' + (result.error || ''));
+        }
+    } catch (error) {
+        alert('新建分组失败: ' + error.message);
+    }
+};
+
 
 /**
  * 当前查看的股票代码（用于收藏功能）

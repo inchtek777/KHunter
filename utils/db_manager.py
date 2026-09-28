@@ -1127,17 +1127,17 @@ class DBManager:
             return False
 
     def remove_favorite(self, stock_code: str) -> bool:
-        """从收藏夹移除股票
+        """从收藏夹移除股票（同时移除其所有分组归属）
         Args:
             stock_code: 股票代码
         Returns:
             bool: 是否成功
         """
         try:
-            sql = "DELETE FROM stock_favorite WHERE stock_code = ?"
-            conn = self.connect()
-            conn.execute(sql, (stock_code,))
-            conn.commit()
+            with self.transaction():
+                conn = self.connect()
+                conn.execute("DELETE FROM stock_favorite_group_member WHERE stock_code = ?", (stock_code,))
+                conn.execute("DELETE FROM stock_favorite WHERE stock_code = ?", (stock_code,))
             logger.info(f"取消收藏成功: {stock_code}")
             return True
         except Exception as e:
@@ -1207,3 +1207,248 @@ class DBManager:
         except Exception as e:
             logger.error(f"获取选股记录失败 {stock_code}: {str(e)}")
             return {}
+
+    # ==================== 自选股分组相关方法 ====================
+
+    def create_favorite_group(self, name: str) -> dict:
+        """创建自选股分组
+        Args:
+            name: 分组名称
+        Returns:
+            dict: {'success': bool, 'group_id': int?, 'error': str?}
+        """
+        # name: 分组名称，类型str，必填
+        name = (name or '').strip()
+        if not name:
+            return {'success': False, 'error': '分组名称不能为空'}
+        if len(name) > 50:
+            return {'success': False, 'error': '分组名称最多50个字符'}
+        try:
+            with self.transaction():
+                cursor = self.connect().execute(
+                    "INSERT INTO stock_favorite_group (name) VALUES (?)", (name,)
+                )
+                group_id = cursor.lastrowid
+            logger.info(f"创建自选股分组成功: {name}")
+            return {'success': True, 'group_id': group_id, 'name': name}
+        except sqlite3.IntegrityError:
+            return {'success': False, 'error': '分组名称已存在'}
+        except Exception as e:
+            logger.error(f"创建分组失败 {name}: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
+    def rename_favorite_group(self, group_id: int, name: str) -> dict:
+        """重命名自选股分组
+        Args:
+            group_id: 分组ID
+            name: 新名称
+        Returns:
+            dict: {'success': bool, 'error': str?}
+        """
+        # group_id: 分组ID，类型int，必填; name: 新名称，类型str，必填
+        name = (name or '').strip()
+        if not name or len(name) > 50:
+            return {'success': False, 'error': '分组名称无效（1-50个字符）'}
+        try:
+            with self.transaction():
+                cursor = self.connect().execute(
+                    "UPDATE stock_favorite_group SET name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (name, group_id)
+                )
+                affected = cursor.rowcount
+            if affected == 0:
+                return {'success': False, 'error': '分组不存在'}
+            return {'success': True}
+        except sqlite3.IntegrityError:
+            return {'success': False, 'error': '分组名称已存在'}
+        except Exception as e:
+            logger.error(f"重命名分组失败 {group_id}: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
+    def delete_favorite_group(self, group_id: int) -> dict:
+        """删除自选股分组（级联删除其成员归属，收藏主记录保留）
+        Args:
+            group_id: 分组ID
+        Returns:
+            dict: {'success': bool, 'error': str?}
+        """
+        # group_id: 分组ID，类型int，必填
+        try:
+            with self.transaction():
+                conn = self.connect()
+                conn.execute("DELETE FROM stock_favorite_group_member WHERE group_id=?", (group_id,))
+                cursor = conn.execute("DELETE FROM stock_favorite_group WHERE id=?", (group_id,))
+                affected = cursor.rowcount
+            if affected == 0:
+                return {'success': False, 'error': '分组不存在'}
+            return {'success': True}
+        except Exception as e:
+            logger.error(f"删除分组失败 {group_id}: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
+    def get_favorite_groups(self) -> list:
+        """获取所有自选股分组（含成员数量）
+        Returns:
+            list: 分组列表
+        """
+        try:
+            sql = """
+                SELECT g.id, g.name, g.created_at, g.updated_at,
+                       COUNT(m.id) AS member_count
+                FROM stock_favorite_group g
+                LEFT JOIN stock_favorite_group_member m ON m.group_id = g.id
+                GROUP BY g.id, g.name, g.created_at, g.updated_at
+                ORDER BY g.created_at ASC
+            """
+            results = self.query(sql)
+            return results if results else []
+        except Exception as e:
+            logger.error(f"获取分组列表失败: {str(e)}")
+            return []
+
+    def get_group_members(self, group_id: int) -> list:
+        """获取指定分组的成员股票
+        Args:
+            group_id: 分组ID
+        Returns:
+            list: 成员股票列表
+        """
+        # group_id: 分组ID，类型int，必填
+        try:
+            sql = """
+                SELECT m.stock_code, m.stock_name, m.added_at,
+                       f.strategy_name, f.selection_date
+                FROM stock_favorite_group_member m
+                LEFT JOIN stock_favorite f ON f.stock_code = m.stock_code
+                WHERE m.group_id = ?
+                ORDER BY m.added_at DESC
+            """
+            results = self.query(sql, (group_id,))
+            return results if results else []
+        except Exception as e:
+            logger.error(f"获取分组成员失败 {group_id}: {str(e)}")
+            return []
+
+    def _filter_valid_stock_codes(self, codes: List[str]) -> Dict[str, str]:
+        """校验股票代码是否存在于 stock_basic，并返回权威名称
+        Args:
+            codes: 待校验的股票代码列表
+        Returns:
+            dict: {code: name}，仅包含存在的股票
+        """
+        # codes: 股票代码列表，类型list，必填
+        valid: Dict[str, str] = {}
+        unique = list({c for c in codes if c})
+        # 分批查询，避免超出 SQLite 变量数量上限
+        for i in range(0, len(unique), 500):
+            chunk = unique[i:i + 500]
+            placeholders = ','.join(['?'] * len(chunk))
+            rows = self.query(
+                f"SELECT code, name FROM stock_basic WHERE code IN ({placeholders})",
+                tuple(chunk)
+            )
+            for row in rows or []:
+                valid[row['code']] = row.get('name') or ''
+        return valid
+
+    def add_stocks_to_group(self, group_id: int, stocks: list) -> dict:
+        """批量将股票加入分组，并同步写入收藏主记录
+        Args:
+            group_id: 分组ID
+            stocks: 股票列表，元素为 {'code': str, 'name': str}
+        Returns:
+            dict: {'success': bool, 'added': int, 'skipped': int, 'error': str?}
+        """
+        # group_id: 分组ID，类型int，必填; stocks: 股票列表，类型list，必填
+        if not stocks:
+            return {'success': False, 'error': '未选择任何股票'}
+        group = self.query_one("SELECT id FROM stock_favorite_group WHERE id=?", (group_id,))
+        if not group:
+            return {'success': False, 'error': '分组不存在'}
+
+        requested = [str(item.get('code', '')).strip() for item in stocks]
+        valid_names = self._filter_valid_stock_codes(requested)
+        skipped = len([c for c in requested if c and c not in valid_names])
+
+        try:
+            added = 0
+            with self.transaction():
+                conn = self.connect()
+                for code in dict.fromkeys(c for c in requested if c in valid_names):
+                    name = valid_names[code]
+                    # 收藏主记录：已存在则保留原策略/日期
+                    conn.execute(
+                        "INSERT OR IGNORE INTO stock_favorite (stock_code, stock_name) VALUES (?, ?)",
+                        (code, name)
+                    )
+                    cursor = conn.execute(
+                        "INSERT OR IGNORE INTO stock_favorite_group_member (group_id, stock_code, stock_name) VALUES (?, ?, ?)",
+                        (group_id, code, name)
+                    )
+                    added += cursor.rowcount
+            logger.info(f"批量加入分组成功: group_id={group_id}, 新增{added}只, 跳过{skipped}只")
+            return {'success': True, 'added': added, 'skipped': skipped}
+        except Exception as e:
+            logger.error(f"批量加入分组失败 {group_id}: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
+    def remove_stock_from_group(self, group_id: int, stock_code: str) -> dict:
+        """从分组移除单只股票（仅解除归属，不删除收藏主记录）
+        Args:
+            group_id: 分组ID
+            stock_code: 股票代码
+        Returns:
+            dict: {'success': bool, 'error': str?}
+        """
+        # group_id: 分组ID，类型int，必填; stock_code: 股票代码，类型str，必填
+        try:
+            with self.transaction():
+                self.connect().execute(
+                    "DELETE FROM stock_favorite_group_member WHERE group_id=? AND stock_code=?",
+                    (group_id, stock_code)
+                )
+            return {'success': True}
+        except Exception as e:
+            logger.error(f"从分组移除股票失败 {group_id}/{stock_code}: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
+    def get_ungrouped_favorites(self) -> list:
+        """获取未归入任何分组的收藏股票（兼容单只星标收藏）
+        Returns:
+            list: 收藏记录列表
+        """
+        try:
+            sql = """
+                SELECT id, stock_code, stock_name, strategy_name, selection_date, saved_at, remark
+                FROM stock_favorite
+                WHERE stock_code NOT IN (SELECT stock_code FROM stock_favorite_group_member)
+                ORDER BY saved_at DESC
+            """
+            results = self.query(sql)
+            return results if results else []
+        except Exception as e:
+            logger.error(f"获取未分组收藏失败: {str(e)}")
+            return []
+
+    def get_stock_groups(self, stock_code: str) -> list:
+        """获取某只股票所属的分组
+        Args:
+            stock_code: 股票代码
+        Returns:
+            list: [{'id', 'name'}, ...]
+        """
+        # stock_code: 股票代码，类型str，必填
+        try:
+            sql = """
+                SELECT g.id, g.name
+                FROM stock_favorite_group g
+                JOIN stock_favorite_group_member m ON m.group_id = g.id
+                WHERE m.stock_code = ?
+                ORDER BY g.created_at ASC
+            """
+            results = self.query(sql, (stock_code,))
+            return results if results else []
+        except Exception as e:
+            logger.error(f"获取股票所属分组失败 {stock_code}: {str(e)}")
+            return []
+

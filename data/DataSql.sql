@@ -967,4 +967,45 @@ CREATE TABLE IF NOT EXISTS stock_favorite (
 CREATE INDEX IF NOT EXISTS idx_stock_favorite_code ON stock_favorite(stock_code);
 -- idx_stock_favorite_code: 股票代码索引，用于快速查询收藏状态
 
+-- ==================== 自选股分组 ====================
+-- stock_favorite 作为收藏主记录（单只股票唯一），分组通过关联表实现多对多归属。
+CREATE TABLE IF NOT EXISTS stock_favorite_group (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- id: 自增主键，类型INTEGER，必填
+    name VARCHAR(50) NOT NULL,
+    -- name: 分组名称，类型VARCHAR(50)，必填，唯一
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- created_at: 创建时间，类型DATETIME，必填，默认当前时间
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- updated_at: 更新时间，类型DATETIME，必填，默认当前时间
+    UNIQUE(name)
+    -- 分组名称唯一，避免重名
+);
+-- 为 stock_favorite_group 表创建索引
+CREATE INDEX IF NOT EXISTS idx_stock_favorite_group_name ON stock_favorite_group(name);
+-- idx_stock_favorite_group_name: 分组名称索引，用于快速查重与查询
+
+-- ==================== 自选股分组成员 ====================
+CREATE TABLE IF NOT EXISTS stock_favorite_group_member (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- id: 自增主键，类型INTEGER，必填
+    group_id INTEGER NOT NULL,
+    -- group_id: 所属分组ID，类型INTEGER，必填，关联 stock_favorite_group.id
+    stock_code VARCHAR(20) NOT NULL,
+    -- stock_code: 股票代码，类型VARCHAR(20)，必填，例如000001
+    stock_name VARCHAR(50),
+    -- stock_name: 股票名称，类型VARCHAR(50)，可选，例如平安银行
+    added_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- added_at: 加入分组时间，类型DATETIME，必填，默认当前时间
+    UNIQUE(group_id, stock_code),
+    -- 同一分组内股票代码唯一，避免重复归组
+    FOREIGN KEY(group_id) REFERENCES stock_favorite_group(id) ON DELETE CASCADE
+    -- 分组删除时级联删除其成员
+);
+-- 为 stock_favorite_group_member 表创建索引
+CREATE INDEX IF NOT EXISTS idx_sfgm_group ON stock_favorite_group_member(group_id);
+-- idx_sfgm_group: 分组ID索引，用于快速查询分组内股票
+CREATE INDEX IF NOT EXISTS idx_sfgm_code ON stock_favorite_group_member(stock_code);
+-- idx_sfgm_code: 股票代码索引，用于快速查询股票所属分组
+
 

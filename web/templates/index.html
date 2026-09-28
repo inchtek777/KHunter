@@ -487,13 +487,23 @@
                 <!-- 股票列表页 -->
                 <div id="stocks-page" class="page">
                     <div class="card">
-                        <div class="card-header">
+                        <div class="card-header" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                             <input type="text" id="stock-search" placeholder="搜索股票代码或名称..." class="search-input">
+                            <div class="stock-batch-bar" id="stock-batch-bar">
+                                <span>已选 <strong id="stock-selected-count">0</strong> 只</span>
+                                <label class="stock-select-all-label">
+                                    <input type="checkbox" id="stock-select-all"> 全选可见
+                                </label>
+                                <select id="favorite-group-select" class="group-select"></select>
+                                <button class="btn btn-secondary" onclick="promptCreateGroupFromStocks()">新建分组</button>
+                                <button class="btn btn-primary" id="add-to-group-btn" onclick="addSelectedToGroup()">加入分组</button>
+                            </div>
                         </div>
                         <div class="table-container">
                             <table class="data-table" id="stocks-table">
                                 <thead>
                                     <tr>
+                                        <th class="col-check"><input type="checkbox" id="stocks-thead-check"></th>
                                         <th>股票代码</th>
                                         <th>股票名称</th>
                                         <th>最新价</th>
@@ -504,7 +514,7 @@
                                     </tr>
                                 </thead>
                                 <tbody id="stocks-tbody">
-                                    <tr><td colspan="7" class="loading">加载中...</td></tr>
+                                    <tr><td colspan="8" class="loading">加载中...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -1958,13 +1968,35 @@
 
                 <!-- 收藏夹页面 -->
                 <div id="favorites-page" class="page">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>⭐ 我的收藏夹</h3>
+                    <div class="favorites-layout">
+                        <!-- 左侧分组列表 -->
+                        <div class="card favorites-sidebar">
+                            <div class="card-header">
+                                <h3>📁 自选分组</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="group-create">
+                                    <input type="text" id="new-group-name" class="search-input" placeholder="新分组名称" maxlength="50">
+                                    <button class="btn btn-primary" onclick="createFavoriteGroup()">添加</button>
+                                </div>
+                                <ul id="favorites-groups-list" class="groups-list">
+                                    <li class="loading">加载中...</li>
+                                </ul>
+                            </div>
                         </div>
-                        <div class="card-body">
-                            <div id="favorites-list">
-                                <p style="color: #999;">加载中...</p>
+                        <!-- 右侧成员列表 -->
+                        <div class="card favorites-main">
+                            <div class="card-header" style="display: flex; align-items: center; justify-content: space-between;">
+                                <h3 id="favorites-current-title">⭐ 我的收藏夹</h3>
+                                <div id="favorites-group-actions" class="group-actions" style="display: none;">
+                                    <button class="btn btn-secondary" onclick="renameCurrentGroup()">重命名</button>
+                                    <button class="btn btn-secondary" onclick="deleteCurrentGroup()">删除分组</button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div id="favorites-list">
+                                    <p style="color: #999;">加载中...</p>
+                                </div>
                             </div>
                         </div>
                     </div>

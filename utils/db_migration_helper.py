@@ -152,6 +152,52 @@ class DatabaseMigrationHelper:
             logger.error(f"检查/添加 buy_range 列失败: {str(e)}")
             return False
     
+    def ensure_favorite_group_tables(self) -> bool:
+        """确保自选股分组表存在（兼容存量数据库）
+
+        Returns:
+            bool: 建表成功返回 True
+        """
+        create_group = """
+            CREATE TABLE IF NOT EXISTS stock_favorite_group (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR(50) NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(name)
+            )
+        """
+        create_member = """
+            CREATE TABLE IF NOT EXISTS stock_favorite_group_member (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                stock_code VARCHAR(20) NOT NULL,
+                stock_name VARCHAR(50),
+                added_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(group_id, stock_code),
+                FOREIGN KEY(group_id) REFERENCES stock_favorite_group(id) ON DELETE CASCADE
+            )
+        """
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_stock_favorite_group_name ON stock_favorite_group(name)",
+            "CREATE INDEX IF NOT EXISTS idx_sfgm_group ON stock_favorite_group_member(group_id)",
+            "CREATE INDEX IF NOT EXISTS idx_sfgm_code ON stock_favorite_group_member(stock_code)",
+        ]
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(create_group)
+            cursor.execute(create_member)
+            for idx in indexes:
+                cursor.execute(idx)
+            conn.commit()
+            conn.close()
+            logger.info("✓ 自选股分组表已就绪")
+            return True
+        except Exception as e:
+            logger.error(f"创建自选股分组表失败: {str(e)}")
+            return False
+
     def check_all_required_columns(self) -> dict:
         """
         检查所有必需的列
@@ -245,7 +291,10 @@ def ensure_database_schema(db_path: str = 'data/stock_selection.db') -> bool:
     
     # 检查并添加 buy_range 列
     success = helper.check_and_add_khunter_buy_range_column() and success
-    
+
+    # 确保自选股分组表存在（兼容存量数据库）
+    success = helper.ensure_favorite_group_tables() and success
+
     # 打印迁移状态
     helper.print_migration_status()
     

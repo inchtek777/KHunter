@@ -727,6 +727,107 @@ def remove_stock_favorite(code):
         return jsonify({'success': False, 'error': str(e)})
 
 
+# ==================== 自选股分组相关接口 ====================
+# 注意：以下路由必须放在 /api/stock/<code> 通配路由之前
+
+@app.route('/api/stock/groups', methods=['GET'])
+def get_stock_groups():
+    """获取自选股分组列表（含未分组收藏）"""
+    try:
+        groups = db_manager.get_favorite_groups()
+        ungrouped = db_manager.get_ungrouped_favorites()
+        return jsonify({'success': True, 'groups': groups, 'ungrouped': ungrouped})
+    except Exception as e:
+        logger.error(f"获取分组列表失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/stock/group', methods=['POST'])
+def create_stock_group():
+    """创建自选股分组"""
+    try:
+        data = request.get_json(force=True) or request.form
+        name = data.get('name', '')
+        result = db_manager.create_favorite_group(name)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"创建分组失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/stock/group/<int:group_id>', methods=['PUT'])
+def rename_stock_group(group_id):
+    """重命名自选股分组"""
+    try:
+        data = request.get_json(force=True) or request.form
+        result = db_manager.rename_favorite_group(group_id, data.get('name', ''))
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"重命名分组失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/stock/group/<int:group_id>', methods=['DELETE'])
+def delete_stock_group(group_id):
+    """删除自选股分组"""
+    try:
+        result = db_manager.delete_favorite_group(group_id)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"删除分组失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/stock/group/<int:group_id>/members', methods=['GET'])
+def get_stock_group_members(group_id):
+    """获取分组内股票"""
+    try:
+        members = db_manager.get_group_members(group_id)
+        return jsonify({'success': True, 'data': members})
+    except Exception as e:
+        logger.error(f"获取分组成员失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/stock/group/<int:group_id>/stocks', methods=['POST'])
+def add_stocks_to_stock_group(group_id):
+    """批量将股票加入分组
+    请求体: {stocks: [{code, name}, ...]}
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        stocks = data.get('stocks', [])
+        if not isinstance(stocks, list) or not stocks:
+            return jsonify({'success': False, 'error': '未选择任何股票'})
+        result = db_manager.add_stocks_to_group(group_id, stocks)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"批量加入分组失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/stock/group/<int:group_id>/stock/<code>', methods=['DELETE'])
+def remove_stock_from_stock_group(group_id, code):
+    """从分组移除单只股票"""
+    try:
+        result = db_manager.remove_stock_from_group(group_id, code)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"从分组移除股票失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/stock/groups/<code>', methods=['GET'])
+def get_stock_group_membership(code):
+    """查询某只股票所属分组"""
+    try:
+        groups = db_manager.get_stock_groups(code)
+        return jsonify({'success': True, 'data': groups})
+    except Exception as e:
+        logger.error(f"查询股票分组归属失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
 @app.route('/api/stock/<code>')
 def get_stock_detail(code):
     """获取单只股票详情"""

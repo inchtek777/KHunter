@@ -1630,3 +1630,179 @@ body {
 #stock-ranking-page .form-group:first-child {
     flex: 0 0 120px;
 }
+
+/* ===== 自选股分组 ===== */
+.stock-batch-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-left: auto;
+    font-size: 14px;
+}
+
+.stock-select-all-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    color: var(--text-muted);
+}
+
+.group-select {
+    padding: 7px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--card-bg);
+    font-size: 14px;
+    max-width: 160px;
+}
+
+.data-table .col-check {
+    width: 36px;
+    text-align: center;
+}
+
+.data-table .col-ops {
+    white-space: nowrap;
+}
+
+.data-table .col-ops .btn {
+    padding: 5px 10px;
+    font-size: 13px;
+}
+
+/* 已在自选股的行内按钮 */
+.btn-added {
+    background: var(--bg-color);
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    cursor: default;
+}
+
+.btn-added:hover {
+    background: var(--bg-color);
+}
+
+.col-check input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.favorites-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+.favorites-sidebar .card-body {
+    padding: 16px;
+}
+
+.group-create {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.group-create .search-input {
+    flex: 1;
+    width: auto;
+}
+
+.groups-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.group-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 14px;
+}
+
+.group-item:hover {
+    background: var(--bg-color);
+}
+
+.group-item.active {
+    background: #eff6ff;
+    color: var(--primary-color);
+    font-weight: 600;
+}
+
+.group-item .group-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.group-item .group-count {
+    flex: 0 0 auto;
+    background: var(--bg-color);
+    color: var(--text-muted);
+    border-radius: 10px;
+    padding: 0 8px;
+    font-size: 12px;
+}
+
+.group-item.active .group-count {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+.group-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.favorites-table {
+    width: 100%;
+}
+
+.btn-danger {
+    background: var(--danger-color);
+    color: #fff;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+}
+
+.remove-btn {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 6px;
+    background: var(--danger-color);
+    color: #fff;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.remove-btn:hover {
+    background: #dc2626;
+}
+
+.favorite-btn {
+    background: transparent;
+    border: none;
+    font-size: 22px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+@media (max-width: 1100px) {
+    .favorites-layout {
+        grid-template-columns: 1fr;
+    }
+}
