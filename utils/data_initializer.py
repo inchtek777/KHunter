@@ -82,9 +82,17 @@ class DataInitializer:
             # 步骤3：批量保存到数据库
             with self.db_manager.transaction():
                 logger.info("保存股票基本信息和市值到数据库...")
-                
+
+                # 已逻辑删除的股票保持删除态，不再写回基础数据
+                deleted_codes = self.db_manager.get_deleted_stock_codes()
+                skip_deleted = 0
+
                 for idx, code in enumerate(stock_codes, 1):
                     try:
+                        if code in deleted_codes:
+                            skip_deleted += 1
+                            continue
+
                         # 从批量获取的数据中查找基本信息
                         name = all_stocks.get(code, '')
                         # 获取市值信息，如果没有则使用 0
@@ -93,11 +101,14 @@ class DataInitializer:
                         if is_st(name):
                             st_skipped += 1
                         elif name:
-                            # 保存基本信息和市值到 stock_basic 表
+                            # 保存基本信息和市值到 stock_basic 表（保留 is_deleted 标记）
                             insert_sql = """
-                            INSERT OR REPLACE INTO stock_basic 
+                            INSERT INTO stock_basic 
                             (code, name, market_cap)
                             VALUES (?, ?, ?)
+                            ON CONFLICT(code) DO UPDATE SET
+                                name = excluded.name,
+                                market_cap = excluded.market_cap
                             """
                             self.db_manager.execute_with_retry(insert_sql, (code, name, market_cap))
                             success_count += 1
@@ -113,7 +124,8 @@ class DataInitializer:
                         failed_count += 1
                         logger.warning(f"处理 {code} 基础数据失败: {e}")
                 
-                logger.info(f"基础数据保存完成: 成功 {success_count} 只, 失败 {failed_count} 只, 跳过ST {st_skipped} 只")
+                logger.info(f"基础数据保存完成: 成功 {success_count} 只, 失败 {failed_count} 只, "
+                            f"跳过ST {st_skipped} 只, 跳过已删除 {skip_deleted} 只")
         
         except Exception as e:
             logger.error(f"初始化基础数据失败: {e}")
@@ -537,6 +549,15 @@ class DataInitializer:
                 st_count = before_count - len(stock_codes)
                 if st_count:
                     logger.info(f"过滤 ST/*ST 股票 {st_count} 只，剩余 {len(stock_codes)} 只")
+
+            # 过滤已逻辑删除的股票：不再参与任何同步与初始化
+            deleted_codes = self.db_manager.get_deleted_stock_codes()
+            if deleted_codes:
+                before_count = len(stock_codes)
+                stock_codes = [c for c in stock_codes if c not in deleted_codes]
+                removed = before_count - len(stock_codes)
+                if removed:
+                    logger.info(f"过滤已逻辑删除股票 {removed} 只，剩余 {len(stock_codes)} 只")
             
             # 增量模式：过滤掉数据库中已存在的股票
             if incremental:

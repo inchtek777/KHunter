@@ -208,11 +208,16 @@ class BasicDataFetcher(DataFetcher):
     def _save_basic_info(self, data: Dict) -> bool:
         """保存股票基本信息"""
         try:
-            # 使用 INSERT OR REPLACE 语句处理唯一约束
+            # 使用 UPSERT 处理唯一约束：INSERT OR REPLACE 会删行重插，
+            # 导致已逻辑删除股票的 is_deleted 标记被复活成 0
             sql = """
-            INSERT OR REPLACE INTO stock_basic 
+            INSERT INTO stock_basic 
             (code, name, market_cap, update_time) 
             VALUES (?, ?, ?, ?)
+            ON CONFLICT(code) DO UPDATE SET
+                name = excluded.name,
+                market_cap = excluded.market_cap,
+                update_time = excluded.update_time
             """
             params = (
                 data['code'],

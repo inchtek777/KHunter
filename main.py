@@ -116,8 +116,8 @@ class QuantSystem:
         # 检查每只股票是否有当天数据
         if check_latest:
             print("\n🔍 检查数据更新状态...")
-            # 从数据库获取所有股票代码
-            stock_codes = self.db_manager.list_all_stocks()
+            # 从数据库获取所有股票代码（排除逻辑删除的股票）
+            stock_codes = self.db_manager.list_all_stocks(include_deleted=False)
             if max_stocks:
                 stock_codes = stock_codes[:max_stocks]
 
@@ -201,8 +201,8 @@ class QuantSystem:
         
         # 加载股票数据（流式处理，不预存全部数据）
         print("\n执行选股（流式处理，降低内存占用）...")
-        # 从数据库获取所有股票代码
-        stock_codes = self.db_manager.list_all_stocks()
+        # 从数据库获取所有股票代码（排除逻辑删除的股票）
+        stock_codes = self.db_manager.list_all_stocks(include_deleted=False)
         
         if not stock_codes:
             print("✗ 没有股票数据，请先执行 init 或 update")

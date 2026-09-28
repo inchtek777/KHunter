@@ -660,7 +660,7 @@ class StrategyRunner:
         # 当日K线未入库(盘后延迟)时，只要近5日有K线即视为活跃，避免预加载整体跳过
         active_codes = self.db_manager.get_active_stock_codes(current_date, lookback_days=5)
         step1_time = (datetime.now() - step1_start).total_seconds()
-        total_stocks = len(self.db_manager.list_all_stocks())
+        total_stocks = len(self.db_manager.list_all_stocks(include_deleted=False))
         logger.info(f"[预加载-第1步] 选股日{current_date}有效股票: {len(active_codes)} 只, "
                     f"排除(退市/停牌): {total_stocks - len(active_codes)} 只, "
                     f"耗时 {step1_time:.1f}s")

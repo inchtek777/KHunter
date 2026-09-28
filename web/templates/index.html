@@ -497,7 +497,13 @@
                                 <select id="favorite-group-select" class="group-select"></select>
                                 <button class="btn btn-secondary" onclick="promptCreateGroupFromStocks()">新建分组</button>
                                 <button class="btn btn-primary" id="add-to-group-btn" onclick="addSelectedToGroup()">加入分组</button>
+                                <button class="btn btn-danger" id="batch-delete-btn" onclick="deleteSelectedStocks()">删除选中</button>
                             </div>
+                            <select id="stocks-view-filter" class="group-select" title="基础数据视图">
+                                <option value="normal">未删除股票</option>
+                                <option value="deleted">已删除股票</option>
+                                <option value="all">全部股票</option>
+                            </select>
                             <button class="btn btn-secondary" id="kline-sync-btn" onclick="startKlineSync()">增量同步行情</button>
                         </div>
                         <div class="kline-sync-panel" id="kline-sync-panel" style="display: none;">

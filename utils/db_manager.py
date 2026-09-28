@@ -842,16 +842,25 @@ class DBManager:
             logger.error(f"更新股票数据失败: {stock_code} - {str(e)}")
             return False
     
-    def list_all_stocks(self) -> List[str]:
+    def list_all_stocks(self, include_deleted: bool = True) -> List[str]:
         """
         列出所有已保存的股票代码（替代 CSVManager.list_all_stocks）
+        
+        Args:
+            include_deleted: 是否包含逻辑删除的股票。新股检测等"库里有过就算认识"
+                             的场景需要保留，选股/统计类入口应传 False。
         
         Returns:
             List[str]: 股票代码列表，已排序
         """
         # 返回所有股票代码列表
         try:
-            sql = "SELECT DISTINCT code FROM stock_kline ORDER BY code"
+            if include_deleted:
+                sql = "SELECT DISTINCT code FROM stock_kline ORDER BY code"
+            else:
+                sql = ("SELECT DISTINCT code FROM stock_kline "
+                       "WHERE code NOT IN (SELECT code FROM stock_basic WHERE is_deleted = 1) "
+                       "ORDER BY code")
             results = self.query(sql)
             stocks = [row['code'] for row in results]
             logger.debug(f"列出所有股票成功，共{len(stocks)}只")
@@ -1007,6 +1016,51 @@ class DBManager:
             logger.debug(f"获取所有股票名称失败: {str(e)}")
             return {}
 
+    def get_deleted_stock_codes(self) -> set:
+        """获取已逻辑删除的股票代码集合
+
+        已删除的股票不再参与同步、选股与回测，但基础数据与历史K线保留。
+
+        Returns:
+            set: 已删除的代码集合，查询失败时返回空集合
+        """
+        try:
+            rows = self.query("SELECT code FROM stock_basic WHERE is_deleted = 1")
+            return {row['code'] for row in rows or []}
+        except Exception as e:
+            logger.debug(f"获取已删除股票失败: {str(e)}")
+            return set()
+
+    def set_stocks_deleted(self, stock_codes: List[str], deleted: bool = True) -> dict:
+        """批量逻辑删除/恢复股票
+
+        Args:
+            stock_codes: 股票代码列表
+            deleted: True 标记删除，False 恢复
+
+        Returns:
+            dict: {'success': bool, 'affected': int, 'error': str?}
+        """
+        # stock_codes: 代码列表，类型list，必填; deleted: 删除标记，类型bool，必填
+        codes = [str(c).strip() for c in (stock_codes or []) if str(c).strip()]
+        if not codes:
+            return {'success': False, 'error': '未指定股票代码'}
+        if len(codes) > 5000:
+            return {'success': False, 'error': '单次最多处理 5000 只股票'}
+
+        placeholders = ','.join('?' * len(codes))
+        sql = (f"UPDATE stock_basic SET is_deleted = ?, update_time = CURRENT_TIMESTAMP "
+               f"WHERE code IN ({placeholders})")
+        try:
+            with self.transaction():
+                cursor = self.connect().execute(sql, (1 if deleted else 0, *codes))
+                affected = cursor.rowcount
+            logger.info(f"股票{'逻辑删除' if deleted else '恢复'}: 提交 {len(codes)} 只, 实际变更 {affected} 只")
+            return {'success': True, 'affected': affected}
+        except Exception as e:
+            logger.error(f"股票逻辑删除失败: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
     def get_active_stock_codes(self, target_date: str, lookback_days: int = 0) -> set:
         """
         批量获取指定日期(或向前回看窗口)有K线数据的股票代码集合（一次SQL替代逐个检查）
@@ -1036,6 +1090,10 @@ class DBManager:
                 results = self.query(sql, (target_date,))
                 logger.info(f"[批量] 获取 {target_date} 有效股票: {len(results) if results else 0} 只")
             codes = {row['code'] for row in results} if results else set()
+            deleted = self.get_deleted_stock_codes()
+            if deleted:
+                # 逻辑删除的股票不进选股池（退市/停牌过滤之外的额外闸门）
+                codes -= deleted
             return codes
         except Exception as e:
             logger.error(f"获取有效股票代码失败: {str(e)}")
@@ -1073,11 +1131,13 @@ class DBManager:
                 """
                 params = list(codes) + [start_date, end_date]
             else:
+                # 全市场加载（回测预加载路径）：排除逻辑删除的股票
                 sql = """
                     SELECT code, date, open, high, low, close,
                            volume, market_cap, K, D, J
                     FROM stock_kline
                     WHERE date BETWEEN ? AND ?
+                      AND code NOT IN (SELECT code FROM stock_basic WHERE is_deleted = 1)
                     ORDER BY code, date ASC
                 """
                 params = (start_date, end_date)

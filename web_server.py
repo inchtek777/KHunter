@@ -241,15 +241,23 @@ def get_stocks():
         
         # 计算分页偏移
         offset = (page - 1) * per_page
-        
+
+        # 视图参数：normal=未删除(默认) / deleted=仅已删除 / all=全部
+        view = request.args.get('view', 'normal')
+        view_filter = {
+            'deleted': 'WHERE is_deleted = 1',
+            'all': '',
+        }.get(view, 'WHERE is_deleted = 0')
+
         # 从 stock_basic 表获取总数
-        total_result = db_manager.query('SELECT COUNT(*) as count FROM stock_basic')
+        total_result = db_manager.query(f'SELECT COUNT(*) as count FROM stock_basic {view_filter}')
         total = total_result[0]['count'] if total_result else 0
-        
+
         # 从 stock_basic 表获取分页数据
-        query = '''
-            SELECT code, name, industry, area, market, list_date, market_cap
+        query = f'''
+            SELECT code, name, industry, area, market, list_date, market_cap, is_deleted
             FROM stock_basic
+            {view_filter}
             ORDER BY code
             LIMIT ? OFFSET ?
         '''
@@ -296,7 +304,8 @@ def get_stocks():
                 'latest_price': latest_price,
                 'latest_date': latest_date,
                 'market_cap': round(market_cap, 2),  # 总市值，单位：亿
-                'data_count': data_count
+                'data_count': data_count,
+                'is_deleted': int(stock.get('is_deleted') or 0)
             })
         
         return jsonify({
@@ -828,6 +837,41 @@ def get_stock_group_membership(code):
         return jsonify({'success': False, 'error': str(e)})
 
 
+@app.route('/api/stock/delete', methods=['POST'])
+def delete_stocks():
+    """批量逻辑删除股票
+
+    只把 stock_basic.is_deleted 置 1：该股票不再参与同步、选股与回测，
+    基础数据与历史K线全部保留，可通过 /api/stock/restore 恢复。
+
+    请求体：{'codes': ['000001', ...]}
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        codes = payload.get('codes') or ([payload['code']] if payload.get('code') else [])
+        result = db_manager.set_stocks_deleted(codes, deleted=True)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"逻辑删除股票失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/stock/restore', methods=['POST'])
+def restore_stocks():
+    """批量恢复已逻辑删除的股票
+
+    请求体：{'codes': ['000001', ...]}
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        codes = payload.get('codes') or ([payload['code']] if payload.get('code') else [])
+        result = db_manager.set_stocks_deleted(codes, deleted=False)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"恢复股票失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
 @app.route('/api/stock/<code>')
 def get_stock_detail(code):
     """获取单只股票详情"""
@@ -1053,8 +1097,8 @@ def run_selection():
         # 加载股票数据
         try:
             func_logger.info("开始加载股票数据...")
-            # 从数据库获取所有股票代码
-            stock_codes = db_manager.list_all_stocks()
+            # 从数据库获取所有股票代码（排除逻辑删除的股票）
+            stock_codes = db_manager.list_all_stocks(include_deleted=False)
 
             # 从数据库获取所有股票名称（不再使用 stock_names.json）
             stock_names = db_manager.get_all_stock_names()
@@ -1935,8 +1979,8 @@ def save_strategy_params(name):
 def get_stats():
     """获取系统统计信息"""
     try:
-        # 从数据库获取所有股票代码
-        stocks = db_manager.list_all_stocks()
+        # 从数据库获取所有股票代码（统计卡片不计已逻辑删除的股票）
+        stocks = db_manager.list_all_stocks(include_deleted=False)
         
         # 获取K线数据的最新日期（表示数据更新到了哪一天）
         # 使用SQL直接查询所有股票的最新日期

@@ -25,8 +25,10 @@ CREATE TABLE IF NOT EXISTS stock_basic (
     -- list_date: 上市日期，类型TEXT，可选，格式YYYY-MM-DD
     market_cap REAL,
     -- market_cap: 市值，类型REAL，可选，单位亿元，例如100.5
-    update_time TEXT DEFAULT CURRENT_TIMESTAMP
+    update_time TEXT DEFAULT CURRENT_TIMESTAMP,
     -- update_time: 更新时间，类型TEXT，默认当前时间，格式YYYY-MM-DD HH:MM:SS
+    is_deleted INTEGER NOT NULL DEFAULT 0
+    -- is_deleted: 逻辑删除标记，类型INTEGER，0=正常，1=已删除（不再同步且不进选股/回测池，数据保留）
 );
 
 

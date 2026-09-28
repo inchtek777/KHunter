@@ -251,6 +251,9 @@ export async function loadStocks() {
     const tbody = document.getElementById('stocks-tbody');
     tbody.innerHTML = '<tr><td colspan="8" class="loading">正在加载股票列表...</td></tr>';
 
+    setupStocksViewFilter();
+    const view = getStocksView();
+
     try {
         let allStocks = [];
         let page = 1;
@@ -258,7 +261,7 @@ export async function loadStocks() {
 
         // 分页获取所有股票
         do {
-            const response = await fetch(`/api/stocks?page=${page}&per_page=500`);
+            const response = await fetch(`/api/stocks?page=${page}&per_page=500&view=${view}`);
             const result = await response.json();
 
             if (result.success) {
@@ -278,6 +281,39 @@ export async function loadStocks() {
     } catch (error) {
         tbody.innerHTML = `<tr><td colspan="8" class="loading">加载失败: ${error.message}</td></tr>`;
     }
+}
+
+/**
+ * 当前列表视图：normal=未删除 / deleted=已删除 / all=全部
+ */
+function getStocksView() {
+    const select = document.getElementById('stocks-view-filter');
+    return select ? select.value : 'normal';
+}
+
+/**
+ * 绑定视图切换（只绑一次）
+ */
+function setupStocksViewFilter() {
+    const select = document.getElementById('stocks-view-filter');
+    if (!select || select.dataset.bound === '1') return;
+    select.dataset.bound = '1';
+    select.addEventListener('change', () => {
+        updateBatchDeleteButton();
+        loadStocks();
+    });
+}
+
+/**
+ * 已删除视图下批量按钮改为"恢复选中"
+ */
+function updateBatchDeleteButton() {
+    const btn = document.getElementById('batch-delete-btn');
+    if (!btn) return;
+    const isDeletedView = getStocksView() === 'deleted';
+    btn.textContent = isDeletedView ? '恢复选中' : '删除选中';
+    btn.classList.toggle('btn-secondary', isDeletedView);
+    btn.classList.toggle('btn-danger', !isDeletedView);
 }
 
 /**
@@ -315,11 +351,12 @@ export function renderStocks(stocks) {
 
     tbody.innerHTML = stocks.map(stock => {
         const added = favoriteCodes.has(stock.code);
+        const deleted = Number(stock.is_deleted || 0) === 1;
         return `
-        <tr data-code="${stock.code}">
+        <tr data-code="${stock.code}"${deleted ? ' class="row-deleted"' : ''}>
             <td class="col-check"><input type="checkbox" class="stock-select-checkbox" value="${stock.code}" data-name="${escapeAttr(stock.name)}"></td>
             <td><strong>${stock.code}</strong></td>
-            <td>${stock.name}</td>
+            <td>${stock.name}${deleted ? ' <span class="tag tag-deleted">已删除</span>' : ''}</td>
             <td>¥${stock.latest_price}</td>
             <td>${stock.latest_date}</td>
             <td>${stock.market_cap}</td>
@@ -330,8 +367,13 @@ export function renderStocks(stocks) {
                 </button>
                 <button class="btn fav-add-btn ${added ? 'btn-added' : 'btn-primary'}"
                         data-code="${stock.code}" data-name="${escapeAttr(stock.name)}"
-                        ${added ? 'disabled' : ''}>
+                        ${added || deleted ? 'disabled' : ''}>
                     ${added ? '已自选' : '加自选'}
+                </button>
+                <button class="btn stock-toggle-btn ${deleted ? 'btn-secondary' : 'btn-danger'}"
+                        data-code="${stock.code}" data-name="${escapeAttr(stock.name)}"
+                        data-deleted="${deleted ? 1 : 0}">
+                    ${deleted ? '恢复' : '删除'}
                 </button>
             </td>
         </tr>
@@ -339,6 +381,8 @@ export function renderStocks(stocks) {
 
     setupStockSelection();
     setupFavoriteButtons();
+    setupStockToggleButtons();
+    updateBatchDeleteButton();
 
     // 搜索功能
     document.getElementById('stock-search').addEventListener('input', (e) => {
@@ -366,6 +410,71 @@ function setupFavoriteButtons() {
         }
     });
 }
+
+/**
+ * 绑定行内"删除/恢复"按钮（委托，避免 5000+ 行逐个绑定）
+ */
+function setupStockToggleButtons() {
+    const tbody = document.getElementById('stocks-tbody');
+    if (tbody.dataset.toggleBound === '1') return;
+    tbody.dataset.toggleBound = '1';
+    tbody.addEventListener('click', (e) => {
+        const btn = e.target.closest('.stock-toggle-btn');
+        if (btn && !btn.disabled) {
+            toggleStocksDeleted([{ code: btn.dataset.code, name: btn.dataset.name }],
+                btn.dataset.deleted !== '1', btn);
+        }
+    });
+}
+
+/**
+ * 批量逻辑删除 / 恢复股票
+ * @param {Array<{code: string, name: string}>} stocks
+ * @param {boolean} deleted - true 为逻辑删除，false 为恢复
+ * @param {HTMLElement} [btn] - 触发按钮（行内按钮禁用态）
+ */
+async function toggleStocksDeleted(stocks, deleted, btn) {
+    if (stocks.length === 0) {
+        alert(`请先勾选要${deleted ? '删除' : '恢复'}的股票`);
+        return;
+    }
+
+    const preview = stocks.length <= 5 ? stocks.map(s => `${s.code} ${s.name}`).join('、')
+        : `${stocks.slice(0, 3).map(s => `${s.code} ${s.name}`).join('、')} 等 ${stocks.length} 只`;
+    const tip = deleted
+        ? `确定逻辑删除 ${preview}？\n删除后这些股票不再参与行情同步、选股与回测，历史数据保留，随时可在"已删除股票"视图中恢复。`
+        : `确定恢复 ${preview}？\n恢复后重新参与行情同步、选股与回测。`;
+    if (!confirm(tip)) return;
+
+    const endpoint = deleted ? '/api/stock/delete' : '/api/stock/restore';
+    const originalText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '处理中...'; }
+    try {
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ codes: stocks.map(s => s.code) })
+        });
+        const result = await response.json();
+        if (!result.success) {
+            alert(`${deleted ? '删除' : '恢复'}失败: ` + (result.error || result.message || '未知错误'));
+            if (btn) { btn.disabled = false; btn.textContent = originalText; }
+            return;
+        }
+        await loadStocks();
+    } catch (error) {
+        alert(`${deleted ? '删除' : '恢复'}失败: ` + error.message);
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+    }
+}
+
+/**
+ * 批量删除/恢复工具栏选中的股票（已删除视图下为恢复）
+ */
+window.deleteSelectedStocks = async function() {
+    const restoreView = getStocksView() === 'deleted';
+    await toggleStocksDeleted(getSelectedStocks(), !restoreView, null);
+};
 
 /**
  * 将单只股票加入自选股

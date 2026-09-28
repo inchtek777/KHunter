@@ -93,7 +93,9 @@ class KlineSyncService:
             self._finish('failed', f'同步失败: {e}')
 
     def _run(self):
-        rows = self.db_manager.query('SELECT code FROM stock_basic ORDER BY code') or []
+        rows = self.db_manager.query(
+            'SELECT code FROM stock_basic WHERE is_deleted = 0 ORDER BY code'
+        ) or []
         codes = [row['code'] for row in rows]
         if not codes:
             self._finish('failed', 'stock_basic 为空，请先初始化基础数据')

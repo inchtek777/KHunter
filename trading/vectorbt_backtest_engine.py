@@ -258,7 +258,7 @@ class VectorBTDataLoader:
             股票代码列表
         """
         try:
-            codes = self.db_manager.list_all_stocks()
+            codes = self.db_manager.list_all_stocks(include_deleted=False)
             return codes if codes else []
         except Exception as e:
             logger.error(f"获取股票代码列表失败: {str(e)}")

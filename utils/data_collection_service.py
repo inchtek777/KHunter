@@ -846,7 +846,7 @@ class DataCollectionService:
             # 【第4步】获取所有股票列表
             self._add_update_log("【第4步】获取所有股票列表...")
             try:
-                sql = "SELECT DISTINCT code FROM stock_basic ORDER BY code"
+                sql = "SELECT DISTINCT code FROM stock_basic WHERE is_deleted = 0 ORDER BY code"
                 result = self.db_manager.query(sql)
                 stock_codes = [row['code'] for row in result] if result else []
                 

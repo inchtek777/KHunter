@@ -232,8 +232,13 @@ class NewStockDetector:
             新增股票代码列表
         """
         try:
-            # 获取数据库中已有的股票代码
+            # 获取数据库中已有的股票代码（含已逻辑删除的：库里认识就不再当新股处理）
             existing_stocks = set(self.db_manager.list_all_stocks())
+            try:
+                rows = self.db_manager.query("SELECT code FROM stock_basic")
+                existing_stocks |= {row['code'] for row in rows or []}
+            except Exception:
+                pass
             logger.debug(f"数据库中已有 {len(existing_stocks)} 只股票")
             
             # 获取最新股票代码集合
