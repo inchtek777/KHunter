@@ -622,8 +622,10 @@ CREATE TABLE IF NOT EXISTS backtest_result (
     -- id: 结果ID，自增主键
     strategy_name TEXT NOT NULL,
     -- strategy_name: 策略名称，类型TEXT，必填，例如多方炮策略
-    support_level_method TEXT NOT NULL,
-    -- support_level_method: 择时策略/支撑位置计算方法，类型TEXT，必填，默认turtle，可选值turtle/support/rsi/bollinger/open/resistance/close_95/close/ma20
+    support_level_method TEXT NOT NULL DEFAULT 'ma20',
+    -- support_level_method: 支撑位计算方法，类型TEXT，必填，默认ma20，可选值ma20/key_close_5/key_close_10/support/resistance/close/close_95/open
+    timing_strategy TEXT NOT NULL DEFAULT '',
+    -- timing_strategy: 择时策略，类型TEXT，必填，可选值turtle/low_turtle/support/rsi/bollinger/macd_bollinger/uptrend_pullback/regime，空=未指定
     backtest_name TEXT NOT NULL,
     -- backtest_name: 回测名称，类型TEXT，必填
     start_date TEXT NOT NULL,

@@ -592,7 +592,7 @@ function displayBacktestResult(result) {
     };
     
     // 获取择时策略显示名称
-    const timingStrategyDisplay = timingStrategyNames[result.support_level_method] || result.support_level_method || '支撑位策略';
+    const timingStrategyDisplay = timingStrategyNames[result.timing_strategy] || result.timing_strategy || '支撑位策略';
     
     const resultsContainer = document.getElementById('backtest-results-container');
     if (resultsContainer) {
@@ -817,7 +817,7 @@ function displayBacktestHistory(results) {
         } else {
             historyBody.innerHTML = results.map(result => {
                 // 获取择时策略显示名称
-                const timingStrategyDisplay = timingStrategyNames[result.support_level_method] || result.support_level_method || '支撑位策略';
+                const timingStrategyDisplay = timingStrategyNames[result.timing_strategy] || result.timing_strategy || '支撑位策略';
                 return `
                 <tr>
                     <td>${result.strategy_name || ''}</td>
@@ -1014,7 +1014,7 @@ function displayBacktestResultInModal(result) {
                         </div>
                         <div class="form-group" style="flex: 1; min-width: 200px;">
                             <label>择时策略</label>
-                            <input type="text" value="${result.support_level_method || ''}" disabled>
+                            <input type="text" value="${result.timing_strategy || ''}" disabled>
                         </div>
                     </div>
                     

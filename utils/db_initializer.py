@@ -86,7 +86,7 @@ class DatabaseInitializer:
             self._verify_new_tables(cursor)
             
             # 存量库补列（CREATE TABLE IF NOT EXISTS 不会给已存在的表加列）
-            self._ensure_stock_basic_columns(cursor)
+            self._ensure_missing_columns(cursor)
             
             # 检查是否需要加载初始化数据
             # 只在stock_basic表为空时加载初始化数据
@@ -210,26 +210,37 @@ class DatabaseInitializer:
         
         return len(missing_tables) == 0
     
-    def _ensure_stock_basic_columns(self, cursor):
-        """为存量库补齐 stock_basic 缺失的列
+    # 存量库需要补齐的列: {表名: [(列名, 列定义), ...]}
+    REQUIRED_COLUMNS = {
+        'stock_basic': [
+            ('is_deleted', 'INTEGER NOT NULL DEFAULT 0'),
+        ],
+        'backtest_result': [
+            ('timing_strategy', "TEXT NOT NULL DEFAULT ''"),
+        ],
+    }
+
+    def _ensure_missing_columns(self, cursor):
+        """为存量库补齐 DataSql.sql 里新增但表里还没有的列
 
         DataSql.sql 用的是 CREATE TABLE IF NOT EXISTS，对已存在的表不会加列，
-        因此逻辑删除标记 is_deleted 需要单独 ALTER。
+        新增列必须单独 ALTER。
         
         Args:
             cursor: 数据库游标
         """
-        cursor.execute("PRAGMA table_info(stock_basic)")
-        columns = {row[1] for row in cursor.fetchall()}
-        
-        if not columns:
-            return
-        
-        if 'is_deleted' not in columns:
-            cursor.execute(
-                "ALTER TABLE stock_basic ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"
-            )
-            logger.info("stock_basic 已补充 is_deleted 列（逻辑删除标记）")
+        for table, columns_spec in self.REQUIRED_COLUMNS.items():
+            cursor.execute(f"PRAGMA table_info({table})")
+            existing = {row[1] for row in cursor.fetchall()}
+            if not existing:
+                continue
+            
+            for column, definition in columns_spec:
+                if column not in existing:
+                    cursor.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                    )
+                    logger.info(f"{table} 已补充 {column} 列")
     
     def check_databases_exist(self) -> bool:
         """

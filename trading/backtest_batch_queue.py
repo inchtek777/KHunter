@@ -327,7 +327,8 @@ class BacktestBatchQueue:
             # 构建保存到数据库的结果格式
             save_result = {
                 'strategy_name': strategy_name,
-                'support_level_method': timing_strategy,  # 保存择时策略
+                'support_level_method': support_level_method,  # 支撑位计算方法
+                'timing_strategy': timing_strategy,  # 择时策略
                 'backtest_name': f"{strategy_name}_{start_date}_{end_date}",
                 'start_date': start_date,
                 'end_date': end_date,

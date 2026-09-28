@@ -223,6 +223,7 @@ class BacktestDAO:
             result_id = self.db.insert('backtest_result', {
                 'strategy_name': result.get('strategy_name', ''),
                 'support_level_method': result.get('support_level_method', ''),
+                'timing_strategy': result.get('timing_strategy', ''),
                 'backtest_name': result.get('backtest_name', ''),
                 'start_date': result.get('start_date', ''),
                 'end_date': result.get('end_date', ''),
@@ -487,6 +488,7 @@ class BacktestDAO:
                 UPDATE backtest_result SET
                     strategy_name = ?,
                     support_level_method = ?,
+                    timing_strategy = ?,
                     backtest_name = ?,
                     start_date = ?,
                     end_date = ?,
@@ -513,6 +515,7 @@ class BacktestDAO:
             params = (
                 result.get('strategy_name', ''),
                 result.get('support_level_method', ''),
+                result.get('timing_strategy', ''),
                 result.get('backtest_name', ''),
                 result.get('start_date', ''),
                 result.get('end_date', ''),

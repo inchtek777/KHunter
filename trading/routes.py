@@ -962,7 +962,8 @@ def run_backtest():
         # 使用中文策略名称保存到数据库，每次都创建新记录
         save_result = {
             'strategy_name': strategy_name,  # 保存中文策略名称
-            'support_level_method': timing_strategy,  # 保存择时策略
+            'support_level_method': support_level_method,  # 支撑位计算方法
+            'timing_strategy': timing_strategy,  # 择时策略
             'backtest_name': f"{strategy_name}_{start_date}_{end_date}",
             'start_date': start_date,
             'end_date': end_date,
@@ -3058,7 +3059,8 @@ def run_regime_backtest():
         try:
             save_result = {
                 'strategy_name': f"自适应回测({result.get('strategy_name', '')})",
-                'support_level_method': 'regime',
+                'support_level_method': config['support_level_method'],
+                'timing_strategy': 'regime',
                 'backtest_name': f"自适应_{start_date}_{end_date}",
                 'start_date': start_date,
                 'end_date': end_date,
