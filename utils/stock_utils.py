@@ -40,6 +40,20 @@ def is_bse(code: str) -> bool:
     return code.startswith('8')
 
 
+def is_st(name: str) -> bool:
+    """判断是否为ST/*ST风险警示股票
+
+    与 strategy/base_strategy.py 的选股过滤口径保持一致。
+
+    Args:
+        name: 股票名称
+
+    Returns:
+        bool: 是否为ST股票
+    """
+    return bool(name) and (name.startswith('ST') or name.startswith('*ST'))
+
+
 def get_min_trade_unit(code: str) -> int:
     """获取股票最小买卖单位
 

@@ -297,14 +297,16 @@ class KlineUpdater:
                         ready_codes.append(code)
                         break  # 该股票已有目标日期数据，不再检查
 
-            # 至少 2 只返回目标日期数据才视为就绪
-            if len(ready_codes) >= 2:
+            # 至少 2 只返回目标日期数据才视为就绪；样本不足 2 只时以样本数为准，
+            # 否则小批次（如单只停牌股所在批次）会永远无法通过检查
+            required = min(2, len(sample_codes))
+            if len(ready_codes) >= required:
                 logger.info(f"数据源就绪检查: {ready_codes} 已有 {target_date} 数据，数据源就绪")
                 return True
 
             logger.warning(
                 f"数据源就绪检查: {len(ready_codes)}/{len(kline_data)} 只有目标日期数据 "
-                f"(要求 >= 2), 已有: {ready_codes}, 当前最新日期: {sorted(all_dates)}"
+                f"(要求 >= {required}), 已有: {ready_codes}, 当前最新日期: {sorted(all_dates)}"
             )
             return False
 

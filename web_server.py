@@ -2488,6 +2488,46 @@ def get_kline_init_progress():
     })
 
 
+# ==================== 行情增量同步 API ====================
+
+@app.route('/api/data/kline/sync', methods=['POST'])
+def start_kline_sync():
+    """启动行情增量同步
+
+    按每只股票自身的最新日期分档补齐K线（无历史的股票回补约3年），
+    不受交易时段限制，数据已到目标交易日时幂等跳过。
+    """
+    try:
+        from utils.kline_sync_service import get_kline_sync_service
+        result = get_kline_sync_service(db_manager).start()
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"启动行情增量同步失败: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/api/data/kline/sync/status')
+def get_kline_sync_status():
+    """获取行情增量同步进度"""
+    try:
+        from utils.kline_sync_service import get_kline_sync_service
+        return jsonify({'success': True, 'data': get_kline_sync_service(db_manager).get_status()})
+    except Exception as e:
+        logger.error(f"获取行情增量同步进度失败: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/api/data/kline/sync/cancel', methods=['POST'])
+def cancel_kline_sync():
+    """取消行情增量同步（当前批次结束后停止）"""
+    try:
+        from utils.kline_sync_service import get_kline_sync_service
+        return jsonify(get_kline_sync_service(db_manager).cancel())
+    except Exception as e:
+        logger.error(f"取消行情增量同步失败: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+
 # ==================== 数据采集 API ====================
 
 @app.route('/api/data/init/config')

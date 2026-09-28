@@ -5,6 +5,8 @@ import logging
 from typing import Dict, Optional
 from datetime import datetime, timedelta
 
+from utils.stock_utils import is_st
+
 # 配置日志
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,7 @@ class DataInitializer:
         logger.info("开始初始化基础数据...")
         success_count = 0
         failed_count = 0
+        st_skipped = 0
         
         try:
             # 步骤1：获取股票名称（批量）
@@ -87,7 +90,9 @@ class DataInitializer:
                         # 获取市值信息，如果没有则使用 0
                         market_cap = market_caps.get(code, 0)
                         
-                        if name:
+                        if is_st(name):
+                            st_skipped += 1
+                        elif name:
                             # 保存基本信息和市值到 stock_basic 表
                             insert_sql = """
                             INSERT OR REPLACE INTO stock_basic 
@@ -108,7 +113,7 @@ class DataInitializer:
                         failed_count += 1
                         logger.warning(f"处理 {code} 基础数据失败: {e}")
                 
-                logger.info(f"基础数据保存完成: 成功 {success_count} 只, 失败 {failed_count} 只")
+                logger.info(f"基础数据保存完成: 成功 {success_count} 只, 失败 {failed_count} 只, 跳过ST {st_skipped} 只")
         
         except Exception as e:
             logger.error(f"初始化基础数据失败: {e}")
@@ -524,6 +529,14 @@ class DataInitializer:
                     self._report_progress(0, "正在获取股票列表...")
                     all_stocks = self.stock_data_fetcher.get_all_stock_codes()
                 stock_codes = list(all_stocks.keys())
+            
+            # 过滤 ST/*ST 股票（与策略选股口径一致），避免同步后重新写回基础数据
+            if all_stocks:
+                before_count = len(stock_codes)
+                stock_codes = [c for c in stock_codes if not is_st(all_stocks.get(c, ''))]
+                st_count = before_count - len(stock_codes)
+                if st_count:
+                    logger.info(f"过滤 ST/*ST 股票 {st_count} 只，剩余 {len(stock_codes)} 只")
             
             # 增量模式：过滤掉数据库中已存在的股票
             if incremental:

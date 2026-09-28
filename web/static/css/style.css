@@ -1641,6 +1641,67 @@ body {
     font-size: 14px;
 }
 
+/* ===== 行情增量同步面板 ===== */
+.kline-sync-panel {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-color);
+}
+
+.kline-sync-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.kline-sync-pct {
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.kline-sync-track {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--border-color);
+    overflow: hidden;
+}
+
+.kline-sync-bar {
+    height: 100%;
+    width: 0;
+    background: var(--primary-color);
+    transition: width 0.4s ease;
+}
+
+.kline-sync-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.kline-sync-logs {
+    margin: 0;
+    padding-left: 18px;
+    list-style: disc;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    max-height: 92px;
+    overflow-y: auto;
+}
+
+.btn-small {
+    padding: 5px 12px;
+    font-size: 13px;
+    flex-shrink: 0;
+}
+
 .stock-select-all-label {
     display: inline-flex;
     align-items: center;

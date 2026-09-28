@@ -498,6 +498,18 @@
                                 <button class="btn btn-secondary" onclick="promptCreateGroupFromStocks()">新建分组</button>
                                 <button class="btn btn-primary" id="add-to-group-btn" onclick="addSelectedToGroup()">加入分组</button>
                             </div>
+                            <button class="btn btn-secondary" id="kline-sync-btn" onclick="startKlineSync()">增量同步行情</button>
+                        </div>
+                        <div class="kline-sync-panel" id="kline-sync-panel" style="display: none;">
+                            <div class="kline-sync-head">
+                                <span id="kline-sync-summary">准备中...</span>
+                                <span class="kline-sync-pct" id="kline-sync-pct">0%</span>
+                            </div>
+                            <div class="kline-sync-track"><div class="kline-sync-bar" id="kline-sync-bar"></div></div>
+                            <div class="kline-sync-foot">
+                                <ul class="kline-sync-logs" id="kline-sync-logs"></ul>
+                                <button class="btn btn-danger btn-small" id="kline-sync-cancel" onclick="cancelKlineSync()">取消</button>
+                            </div>
                         </div>
                         <div class="table-container">
                             <table class="data-table" id="stocks-table">

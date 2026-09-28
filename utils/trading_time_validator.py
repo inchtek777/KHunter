@@ -113,6 +113,23 @@ class TradingTimeValidator:
             logger.warning(f"从本地文件获取最后更新日期失败: {e}")
             return ""
 
+    def get_latest_target_date(self) -> str:
+        """获取最近一个可更新的交易日（不做交易时段限制）
+
+        手动增量同步使用：交易日收盘后可更新到当日，盘中或非交易日回退到上一交易日。
+
+        Returns:
+            str: 目标更新日期（YYYY-MM-DD），无法确定时返回空字符串
+        """
+        now = datetime.now()
+        today_str = now.strftime("%Y-%m-%d")
+        trading_end_minutes = self.TRADING_END_HOUR * 60 + self.TRADING_END_MINUTE
+
+        if now.hour * 60 + now.minute >= trading_end_minutes and self._is_trading_day(today_str):
+            return today_str
+
+        return self._get_last_trading_day(today_str)
+
     def validate_update_time(self) -> Tuple[bool, str, str]:
         """
         验证当前时间是否允许更新

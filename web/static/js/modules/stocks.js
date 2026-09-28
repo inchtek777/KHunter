@@ -274,6 +274,7 @@ export async function loadStocks() {
         await loadFavoriteCodes();
         renderStocks(allStocks);
         loadFavoriteGroupOptions();
+        resumeKlineSyncIfRunning();
     } catch (error) {
         tbody.innerHTML = `<tr><td colspan="8" class="loading">加载失败: ${error.message}</td></tr>`;
     }
@@ -600,6 +601,116 @@ window.promptCreateGroupFromStocks = async function() {
  * 当前查看的股票代码（用于收藏功能）
  */
 let currentStockCode = '';
+
+/**
+ * 行情增量同步：轮询定时器
+ */
+let klineSyncTimer = null;
+
+/**
+ * 启动行情增量同步
+ */
+window.startKlineSync = async function() {
+    if (!confirm('将按每只股票自身的最新交易日补齐行情（无历史的股票回补约3年），'
+        + '全库同步可能需要数分钟，确定开始？')) {
+        return;
+    }
+
+    const btn = document.getElementById('kline-sync-btn');
+    btn.disabled = true;
+    try {
+        const response = await fetch('/api/data/kline/sync', { method: 'POST' });
+        const result = await response.json();
+        if (!result.success) {
+            alert('启动增量同步失败: ' + (result.message || ''));
+            btn.disabled = false;
+            return;
+        }
+        document.getElementById('kline-sync-panel').style.display = 'block';
+        startKlineSyncPolling();
+    } catch (error) {
+        alert('启动增量同步失败: ' + error.message);
+        btn.disabled = false;
+    }
+};
+
+/**
+ * 取消行情增量同步
+ */
+window.cancelKlineSync = async function() {
+    try {
+        const response = await fetch('/api/data/kline/sync/cancel', { method: 'POST' });
+        const result = await response.json();
+        if (!result.success) alert('取消失败: ' + (result.message || ''));
+    } catch (error) {
+        alert('取消失败: ' + error.message);
+    }
+};
+
+/**
+ * 开始轮询同步进度
+ */
+function startKlineSyncPolling() {
+    if (klineSyncTimer) clearInterval(klineSyncTimer);
+    fetchKlineSyncStatus();
+    klineSyncTimer = setInterval(fetchKlineSyncStatus, 2000);
+}
+
+/**
+ * 页面进入时若有同步任务在跑则恢复进度展示
+ */
+async function resumeKlineSyncIfRunning() {
+    try {
+        const response = await fetch('/api/data/kline/sync/status');
+        const result = await response.json();
+        if (result.success && result.data.running) startKlineSyncPolling();
+    } catch (error) {
+        console.error('查询同步状态失败:', error);
+    }
+}
+
+/**
+ * 拉取并渲染同步进度
+ */
+async function fetchKlineSyncStatus() {
+    try {
+        const response = await fetch('/api/data/kline/sync/status');
+        const result = await response.json();
+        if (!result.success) return;
+        renderKlineSyncStatus(result.data);
+
+        if (!result.data.running) {
+            clearInterval(klineSyncTimer);
+            klineSyncTimer = null;
+            document.getElementById('kline-sync-btn').disabled = false;
+            document.getElementById('kline-sync-cancel').style.display = 'none';
+            if (result.data.total > 0) loadStocks();
+        }
+    } catch (error) {
+        console.error('查询同步状态失败:', error);
+    }
+}
+
+/**
+ * 渲染同步进度面板
+ * @param {Object} data - 同步状态
+ */
+function renderKlineSyncStatus(data) {
+    const total = data.total || 0;
+    const percent = total > 0 ? Math.floor((data.processed || 0) * 100 / total) : 0;
+
+    document.getElementById('kline-sync-panel').style.display = 'block';
+    document.getElementById('kline-sync-bar').style.width = percent + '%';
+    document.getElementById('kline-sync-pct').textContent = percent + '%';
+    document.getElementById('kline-sync-summary').textContent =
+        `目标交易日 ${data.target_date || '-'} | 已处理 ${data.processed || 0}/${total} | ` +
+        `新增 ${data.added || 0} 条 | 更新 ${data.updated || 0} 条 | ` +
+        `除权重建 ${data.rebuilt || 0} 只 | 失败 ${data.failed || 0} 只`;
+    document.getElementById('kline-sync-cancel').style.display = data.running ? '' : 'none';
+
+    const logs = document.getElementById('kline-sync-logs');
+    logs.innerHTML = (data.logs || []).slice(-6).map(line => `<li>${escapeAttr(line)}</li>`).join('');
+}
 
 /**
  * 查看股票详情

@@ -71,8 +71,7 @@ def _ensure_cache_loaded():
 def refresh_trading_calendar_cache():
     """强制刷新交易日内存缓存（供回测引擎等上游模块写入缓存文件后调用）"""
     global _trading_calendar_cache
-    # 清除 @lru_cache 缓存
-    is_trading_day.cache_clear()
+    # 清除 @lru_cache 缓存（is_trading_day 未用 lru_cache，清了会 AttributeError）
     get_trading_days.cache_clear()
     # 重新从文件加载
     _trading_calendar_cache = None
