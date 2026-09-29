@@ -181,6 +181,10 @@ class MoneyflowScorer:
             tushare pro API 对象
         """
         if self._pro is None:
+            if not self._token:
+                # 无 token 时快速失败：空 token 仍会发起请求并被服务端以"无接口权限"拒绝，
+                # 每只股票都要走完重试 + sleep 才返回，回测会慢一个数量级
+                raise ValueError("未配置 Tushare token（config/tushare_config.json）")
             try:
                 import tushare as ts
                 # 使用 token 初始化 pro API

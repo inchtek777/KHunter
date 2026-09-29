@@ -329,7 +329,8 @@ class BacktestBatchQueue:
                 'strategy_name': strategy_name,
                 'support_level_method': support_level_method,  # 支撑位计算方法
                 'timing_strategy': timing_strategy,  # 择时策略
-                'backtest_name': f"{strategy_name}_{start_date}_{end_date}",
+                'backtest_name': f"{strategy_name}_{start_date}_{end_date}" + (
+                    '_纯信号' if getattr(engine, 'score_degraded', False) else ''),
                 'start_date': start_date,
                 'end_date': end_date,
                 'total_trades': result.get('performance', {}).get('total_trades', 0),

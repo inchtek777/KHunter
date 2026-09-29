@@ -928,9 +928,17 @@ class StrategyRunner:
         scored_stocks = self._score_stocks(active_stocks, strategy_name, current_date)
         
         # 记录每只股票的综合评分（与回测引擎一致）
+        degraded = any(s.get('score_degraded') for s in scored_stocks)
         logger.info("\n股票评分详情:")
         for stock in scored_stocks:
-            logger.info(f"  - {stock['stock_code']} {stock['stock_name']}: 综合评分={stock['score']}，否决标志={stock.get('veto_flag', False)}")
+            score_txt = '不可用(无Tushare)' if stock.get('score_degraded') else stock['score']
+            logger.info(f"  - {stock['stock_code']} {stock['stock_name']}: 综合评分={score_txt}，否决标志={stock.get('veto_flag', False)}")
+        
+        if degraded:
+            # 实盘不降级：评分维度缺失时宁可不出候选，避免仅凭信号下真金白银的单
+            logger.warning("【入池规则】Tushare token 不可用，五维度评分缺失，"
+                           "实盘不采用「纯信号」入池，本次不产生买入候选")
+            return []
         
         # 筛选：入池规则（与回测共用，见 trading/pool_entry_rules.py）
         from trading.pool_entry_rules import filter_candidates, resolve_pool_entry_simplified

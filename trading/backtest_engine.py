@@ -109,6 +109,9 @@ class BacktestEngine:
         # 初始化回测专用评分器
         self.score_calculator = BacktestScoreCalculator(db_manager=self.db_manager)
 
+        # 本次回测是否因 Tushare 不可用而降级为"纯信号"入池（评分维度缺失）
+        self.score_degraded = False
+
         # 股票数据缓存（性能优化）
         self.stock_data_cache = {}  # {code: df} 完整历史数据
         self.stock_name_cache = {}  # {code: name} 股票名称缓存
@@ -175,6 +178,7 @@ class BacktestEngine:
             self.stock_name_cache.clear()
             self.stock_filtered_cache.clear()
             self.buy_candidate_pool.clear()
+            self.score_degraded = False
             
             # 初始化择时策略
             timing_strategy_name = config.get('timing_strategy', 'support')
@@ -933,7 +937,10 @@ class BacktestEngine:
                     filtered_by_veto += 1
                     continue
 
-                if stock.get('score', 0) < score_threshold:
+                # 评分降级（Tushare 不可用）时不走阈值比较，与正常选股口径一致
+                if stock.get('score_degraded'):
+                    self.score_degraded = True
+                elif stock.get('score', 0) < score_threshold:
                     logger.debug(f"预加载股票 {stock['stock_code']} 评分不达标，score={stock.get('score', 0)} < {score_threshold}")
                     filtered_by_score += 1
                     continue
@@ -2199,9 +2206,13 @@ class BacktestEngine:
         scored_stocks = self._score_stocks(selected_stocks, strategy_name, date)
         
         # 记录每只股票的综合评分
+        degraded = any(s.get('score_degraded') for s in scored_stocks)
+        if degraded:
+            self.score_degraded = True
         logger.info("\n股票评分详情:")
         for stock in scored_stocks:
-            logger.info(f"  - {stock['stock_code']} {stock['stock_name']}: 综合评分={stock['score']}，否决标志={stock.get('veto_flag', False)}")
+            score_txt = '不可用(无Tushare)' if stock.get('score_degraded') else stock['score']
+            logger.info(f"  - {stock['stock_code']} {stock['stock_name']}: 综合评分={score_txt}，否决标志={stock.get('veto_flag', False)}")
         
         # 筛选：入池规则（可配置，见 trading/pool_entry_rules.py）
         #   simplified=True  → 只剔除一票否决，其余全部入池（解决池/持仓不足）
@@ -2210,11 +2221,18 @@ class BacktestEngine:
 
         score_threshold = config.get('score_threshold', 60)
         _simplified = resolve_pool_entry_simplified(config, self._load_engine_config())
-        candidate_stocks = filter_candidates(scored_stocks, score_threshold, _simplified)
-        if _simplified:
-            logger.info(f"【入池规则】简易评分：先排除一票否决，资金面得分>={score_threshold} 入池")
+        if degraded:
+            # 评分维度缺失（Tushare token 不可用），综合评分无意义 ⇒ 不做阈值比较，
+            # 让结果体现"纯信号层面"的绩效。
+            candidate_stocks = [s for s in scored_stocks if not s.get('veto_flag', False)]
+            logger.warning("【入池规则】纯信号：Tushare token 不可用导致评分维度缺失，"
+                           "本次跳过评分阈值筛选，只按技术信号入池")
         else:
-            logger.info(f"【入池规则】标准评分：否决票 + 综合评分>={score_threshold}")
+            candidate_stocks = filter_candidates(scored_stocks, score_threshold, _simplified)
+            if _simplified:
+                logger.info(f"【入池规则】简易评分：先排除一票否决，资金面得分>={score_threshold} 入池")
+            else:
+                logger.info(f"【入池规则】标准评分：否决票 + 综合评分>={score_threshold}")
 
         logger.info(f"\n筛选后待买入股票数: {len(candidate_stocks)}")
         if candidate_stocks:

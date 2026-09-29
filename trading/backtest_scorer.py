@@ -32,6 +32,19 @@ from trading.technical_scorer import (
 logger = logging.getLogger(__name__)
 
 
+def _lookup_strategy_weight(strategy_name: str) -> float:
+    """按策略名取信号权重，兼容中文名 / 英文类名 / 带不带"策略"后缀"""
+    for candidate in (
+        strategy_name,
+        strategy_name if strategy_name.endswith('策略') else strategy_name + '策略',
+        strategy_name[:-2] if strategy_name.endswith('策略') else strategy_name,
+        STRATEGY_CLASS_NAME_MAP.get(strategy_name, ''),
+    ):
+        if candidate and candidate in STRATEGY_WEIGHTS:
+            return STRATEGY_WEIGHTS[candidate]
+    return 0
+
+
 # 一票否决结果
 class VetoResult:
     """一票否决结果"""
@@ -632,7 +645,8 @@ class BacktestScoreCalculator:
         # 检查Tushare数据源是否可用
         tushare_available = self.is_tushare_available()
         if not tushare_available:
-            logger.info("Tushare数据源不可用，使用简化评分模式")
+            logger.warning("Tushare token 不可用：五维度评分与否决票均无法计算，本批标记为降级，"
+                           "引擎按【纯信号】规则入池（不参与评分阈值筛选）")
         
         for stock in stocks:
             stock_code = stock['stock_code']
@@ -640,30 +654,11 @@ class BacktestScoreCalculator:
             
             try:
                 if not tushare_available:
-                    # Tushare不可用时使用简化评分
-                    # 计算策略权重作为技术面评分
-                    strategy_weight = 0
-                    for s in hit_strategies:
-                        weight = STRATEGY_WEIGHTS.get(s, 0)
-                        # 如果直接匹配失败，尝试添加策略后缀
-                        if weight == 0 and not s.endswith('策略'):
-                            name_with_suffix = s + '策略'
-                            weight = STRATEGY_WEIGHTS.get(name_with_suffix, 0)
-                        # 如果仍然失败，尝试去掉策略后缀
-                        if weight == 0 and s.endswith('策略'):
-                            name_without_suffix = s[:-2]
-                            weight = STRATEGY_WEIGHTS.get(name_without_suffix, 0)
-                        # 如果仍然失败，尝试使用类名映射
-                        if weight == 0:
-                            chinese_name = STRATEGY_CLASS_NAME_MAP.get(s, '')
-                            if chinese_name:
-                                weight = STRATEGY_WEIGHTS.get(chinese_name, 0)
-                        strategy_weight += weight
-                    
-                    # 综合评分 = 技术面评分（策略权重）
-                    stock['score'] = strategy_weight
-                    stock['technical_score'] = strategy_weight
-                    # 其他维度评分为0（没有tushare数据）
+                    # Tushare 不可用时评分维度全部缺失。此前把"策略权重"当综合评分
+                    # （多数策略权重 50 < 阈值 60），会让所有策略静默 0 成交；
+                    # 现在明确标记降级，由引擎按纯信号规则入池。
+                    stock['score'] = 0
+                    stock['technical_score'] = 0
                     stock['moneyflow_score'] = 0
                     stock['fundamental_score'] = 0
                     stock['sector_score'] = 0
@@ -671,20 +666,15 @@ class BacktestScoreCalculator:
                     stock['veto_flag'] = False
                     stock['veto_reason'] = ''
                     stock['veto_dimension'] = ''
-                    stock['score_level'] = '中性'
-                    stock['strategy_details'] = []
-                    for s in hit_strategies:
-                        weight = STRATEGY_WEIGHTS.get(s, 0)
-                        if weight == 0 and not s.endswith('策略'):
-                            weight = STRATEGY_WEIGHTS.get(s + '策略', 0)
-                        if weight == 0 and s.endswith('策略'):
-                            weight = STRATEGY_WEIGHTS.get(s[:-2], 0)
-                        if weight == 0:
-                            chinese_name = STRATEGY_CLASS_NAME_MAP.get(s, '')
-                            if chinese_name:
-                                weight = STRATEGY_WEIGHTS.get(chinese_name, 0)
-                        stock['strategy_details'].append({'name': s, 'weight': weight})
-                    stock['total_strategy_weight'] = strategy_weight
+                    stock['score_level'] = '评分不可用'
+                    stock['score_degraded'] = True
+                    stock['strategy_details'] = [
+                        {'name': s, 'weight': _lookup_strategy_weight(s)}
+                        for s in hit_strategies
+                    ]
+                    stock['total_strategy_weight'] = sum(
+                        d['weight'] for d in stock['strategy_details']
+                    )
                     scored_stocks.append(stock)
                     continue
                 

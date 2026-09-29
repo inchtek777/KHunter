@@ -955,6 +955,11 @@ def run_backtest():
         # 运行回测（使用英文策略名称）
         result = engine.run_backtest(english_strategy_name, config)
         
+        # Tushare token 缺失时评分维度不可用，引擎会降级为"纯信号"入池；
+        # 在回测名上显式标注，避免纯信号绩效被误读为真实策略绩效
+        score_degraded = bool(getattr(engine, 'score_degraded', False))
+        name_suffix = '_纯信号' if score_degraded else ''
+        
         # 构建保存到数据库的结果格式
         # 使用引擎返回的 final_capital（引擎内已确保 capital_history 与其一致）
         final_capital = result.get('final_capital', config.get('initial_capital', 300000))
@@ -964,7 +969,7 @@ def run_backtest():
             'strategy_name': strategy_name,  # 保存中文策略名称
             'support_level_method': support_level_method,  # 支撑位计算方法
             'timing_strategy': timing_strategy,  # 择时策略
-            'backtest_name': f"{strategy_name}_{start_date}_{end_date}",
+            'backtest_name': f"{strategy_name}_{start_date}_{end_date}{name_suffix}",
             'start_date': start_date,
             'end_date': end_date,
             'total_trades': result.get('performance', {}).get('total_trades', 0),
@@ -1103,7 +1108,11 @@ def run_backtest():
         
         return jsonify({
             'success': True,
-            'message': '回测运行成功',
+            'message': (
+                '回测运行成功（纯信号：Tushare token 不可用导致评分维度缺失，'
+                '本次跳过评分阈值筛选，结果不含评分择优）' if score_degraded
+                else '回测运行成功'
+            ),
             'data': processed_result
         }), 200
     
@@ -3061,7 +3070,8 @@ def run_regime_backtest():
                 'strategy_name': f"自适应回测({result.get('strategy_name', '')})",
                 'support_level_method': config['support_level_method'],
                 'timing_strategy': 'regime',
-                'backtest_name': f"自适应_{start_date}_{end_date}",
+                'backtest_name': f"自适应_{start_date}_{end_date}" + (
+                    '_纯信号' if getattr(engine, 'score_degraded', False) else ''),
                 'start_date': start_date,
                 'end_date': end_date,
                 'total_trades': perf.get('total_trades', 0),
@@ -3138,7 +3148,9 @@ def run_regime_backtest():
 
         return jsonify({
             'success': True,
-            'message': '自适应回测完成',
+            'message': '自适应回测完成' + (
+                '（纯信号：Tushare token 不可用，跳过评分阈值筛选）'
+                if getattr(engine, 'score_degraded', False) else ''),
             'data': {
                 'result_id': result_id,
                 'performance': perf,
