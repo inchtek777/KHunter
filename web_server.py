@@ -212,6 +212,11 @@ from utils.strategy_config_manager import StrategyConfigManager
 app.register_blueprint(khunter_bp)
 logger.info("已注册KHunter蓝图")
 
+# 注册行业数据蓝图（东方财富行业板块 / 关注行业 / 行业指数日K）
+from trading.industry_routes import industry_bp
+app.register_blueprint(industry_bp)
+logger.info("已注册行业数据蓝图")
+
 # 全局更新状态
 update_status = {
     'running': False,

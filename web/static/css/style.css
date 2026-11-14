@@ -1878,3 +1878,170 @@ body {
         grid-template-columns: 1fr;
     }
 }
+
+/* ==================== 行业数据页 ==================== */
+.industry-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.industry-date-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.industry-date-label input {
+    padding: 6px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--text-color);
+    background: var(--card-bg);
+}
+
+.industry-status {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    min-height: 18px;
+}
+
+.industry-status.ok {
+    color: #10b981;
+}
+
+.industry-status.warn {
+    color: #f59e0b;
+}
+
+.industry-status.error {
+    color: #ef4444;
+}
+
+.industry-up {
+    color: #ef4444;
+    font-weight: 600;
+}
+
+.industry-down {
+    color: #10b981;
+    font-weight: 600;
+}
+
+#industry-page .stat-info h3 {
+    font-size: 24px;
+}
+
+/* ==================== 行业轮动回测 ==================== */
+.rotation-desc {
+    color: var(--text-muted);
+    line-height: 1.8;
+    font-size: 14px;
+    margin-bottom: 16px;
+}
+
+.rotation-watched {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.rotation-chip {
+    background: #eef2ff;
+    color: #3730a3;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 13px;
+    border: 1px solid #c7d2fe;
+    white-space: nowrap;
+}
+
+.rotation-chip.missing {
+    background: #fef2f2;
+    color: #b91c1c;
+    border-color: #fecaca;
+}
+
+.rotation-params {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+}
+
+.rotation-param {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.rotation-progress-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.rotation-progress-track {
+    height: 10px;
+    background: #e5e7eb;
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.rotation-progress-bar {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #ef4444, #f59e0b);
+    transition: width 0.3s ease;
+}
+
+.rotation-warnings {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.9;
+}
+
+#rotation-metrics .stat-info h3 {
+    font-size: 22px;
+}
+
+.rotation-chart-wrap {
+    position: relative;
+    width: 100%;
+    height: 360px;
+}
+
+.rotation-chart {
+    width: 100%;
+    height: 100%;
+    min-height: 320px;
+}
+
+.rotation-chart svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    overflow: visible;
+}
+
+#rotation-metrics {
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+#rotation-objective {
+    min-width: 220px;
+}

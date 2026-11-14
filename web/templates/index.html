@@ -324,6 +324,9 @@
                 <li class="nav-item" data-page="ranking-track">
                     <span class="icon">📉</span> 排名跟踪
                 </li>
+                <li class="nav-item" data-page="industry-rotation">
+                    <span class="icon">🔄</span> 行业轮动
+                </li>
                 
                 <!-- 回测管理 -->
                 <li class="nav-group-title">回测管理</li>
@@ -347,6 +350,9 @@
                 </li>
                 <li class="nav-item" data-page="data-update">
                     <span class="icon">🔄</span> 数据更新
+                </li>
+                <li class="nav-item" data-page="industry">
+                    <span class="icon">🏭</span> 行业数据
                 </li>
                 <!-- 系统设置 -->
                 <li class="nav-group-title">系统设置</li>
@@ -2019,6 +2025,300 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- 行业数据页面 -->
+                <div id="industry-page" class="page">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-icon">🏭</div>
+                            <div class="stat-info">
+                                <h3 id="industry-stat-industries">0</h3>
+                                <p>行业板块</p>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">⭐</div>
+                            <div class="stat-info">
+                                <h3 id="industry-stat-watched">0</h3>
+                                <p>关注行业</p>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">🕯️</div>
+                            <div class="stat-info">
+                                <h3 id="industry-stat-rows">0</h3>
+                                <p>已保存日K</p>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon">📅</div>
+                            <div class="stat-info">
+                                <h3 id="industry-stat-latest">-</h3>
+                                <p>最新数据日期</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 行业板块列表 -->
+                    <div class="card">
+                        <div class="card-header" style="gap: 12px; flex-wrap: wrap;">
+                            <h3>🏭 行业板块 <span id="industry-source-label" class="text-muted" style="font-size: 12px; font-weight: normal;">行业指数</span></h3>
+                            <div class="industry-toolbar">
+                                <input type="text" id="industry-search" class="search-input" placeholder="搜索行业代码或名称..." autocomplete="off">
+                                <button class="btn btn-secondary" id="industry-refresh-btn" type="button">刷新行业列表</button>
+                            </div>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>代码</th>
+                                        <th>行业名称</th>
+                                        <th>最新价</th>
+                                        <th>涨跌幅</th>
+                                        <th>换手率</th>
+                                        <th>上涨/下跌</th>
+                                        <th>领涨股</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="industry-list-tbody">
+                                    <tr><td colspan="8" class="loading">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div id="industry-list-status" class="industry-status"></div>
+                    </div>
+
+                    <!-- 关注行业 + 日K拉取 -->
+                    <div class="card">
+                        <div class="card-header" style="gap: 12px; flex-wrap: wrap;">
+                            <h3>⭐ 关注行业</h3>
+                            <div class="industry-toolbar">
+                                <label class="industry-date-label">起始 <input type="date" id="industry-start-date"></label>
+                                <label class="industry-date-label">结束 <input type="date" id="industry-end-date"></label>
+                                <button class="btn btn-primary" id="industry-fetch-all-btn" type="button">拉取全部日K</button>
+                            </div>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>代码</th>
+                                        <th>行业名称</th>
+                                        <th>数据源</th>
+                                        <th>最新日期</th>
+                                        <th>日K条数</th>
+                                        <th>最新收盘</th>
+                                        <th>最新涨跌幅</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="industry-watched-tbody">
+                                    <tr><td colspan="8" class="loading">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div id="industry-fetch-status" class="industry-status"></div>
+                    </div>
+
+                    <!-- 行业日K明细 -->
+                    <div class="card" id="industry-detail-card" style="display: none;">
+                        <div class="card-header" style="gap: 12px; flex-wrap: wrap;">
+                            <h3 id="industry-detail-title">行业日K</h3>
+                            <div class="industry-toolbar">
+                                <span class="text-muted" style="font-size: 12px;">区间使用上方日期</span>
+                                <button class="btn btn-primary btn-small" id="industry-detail-fetch-btn" type="button">拉取日K</button>
+                                <button class="btn btn-secondary btn-small" id="industry-detail-close-btn" type="button">收起</button>
+                            </div>
+                        </div>
+                        <div class="table-container" style="max-height: 480px; overflow-y: auto;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>日期</th>
+                                        <th>开盘</th>
+                                        <th>最高</th>
+                                        <th>最低</th>
+                                        <th>收盘</th>
+                                        <th>涨跌幅</th>
+                                        <th>成交额(亿)</th>
+                                        <th>换手率</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="industry-daily-tbody">
+                                    <tr><td colspan="8" class="loading">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div id="industry-detail-status" class="industry-status"></div>
+                    </div>
+                </div>
+
+                <!-- 行业轮动回测页面 -->
+                <div id="industry-rotation-page" class="page">
+                    <div class="card">
+                        <div class="card-header" style="gap: 12px; flex-wrap: wrap;">
+                            <h3>🔄 行业轮动回测</h3>
+                            <button class="btn btn-primary" id="rotation-run-btn" type="button">开始 10 年回测</button>
+                        </div>
+                        <p class="rotation-desc">
+                            基于关注行业的轮动强度选出 <strong>2 个行业</strong>，每个行业按
+                            「动量 + 趋势 + 低波动 + 流动性」选出 <strong>2 只股票</strong>，
+                            等权持有、<strong>每 5 个交易日调仓</strong>；使用最近 10 年数据回测，
+                            并搜索行业/个股动量窗口以最大化总收益。
+                        </p>
+                        <div id="rotation-watched" class="rotation-watched">加载关注行业...</div>
+                        <div class="rotation-params">
+                            <label class="rotation-param">每行业候选股
+                                <select id="rotation-candidate-limit" class="group-select">
+                                    <option value="20" selected>20 只</option>
+                                    <option value="30">30 只</option>
+                                    <option value="50">50 只</option>
+                                    <option value="100">100 只（较慢）</option>
+                                </select>
+                            </label>
+                            <label class="rotation-param">调仓周期
+                                <select id="rotation-rebalance" class="group-select">
+                                    <option value="5" selected>每 5 个交易日</option>
+                                    <option value="10">每 10 个交易日</option>
+                                    <option value="20">每 20 个交易日</option>
+                                    <option value="40">每 40 个交易日</option>
+                                </select>
+                            </label>
+                            <label class="rotation-param">每行业选股
+                                <select id="rotation-top-stocks" class="group-select">
+                                    <option value="2" selected>2 只</option>
+                                    <option value="3">3 只</option>
+                                </select>
+                            </label>
+                            <label class="rotation-param">
+                                <input type="checkbox" id="rotation-optimize" checked>
+                                参数优化（9 组网格）
+                            </label>
+                            <label class="rotation-param">优化目标
+                                <select id="rotation-objective" class="group-select">
+                                    <option value="max_return" selected>收益最大化（全区间总收益）</option>
+                                    <option value="robust">稳健（样本内外较小年化）</option>
+                                </select>
+                            </label>
+                            <span class="text-muted" id="rotation-universe-info"></span>
+                        </div>
+                        <div id="rotation-hint" class="industry-status"></div>
+                    </div>
+
+                    <div class="card" id="rotation-progress-card" style="display: none;">
+                        <div class="rotation-progress-head">
+                            <span id="rotation-progress-phase">准备</span>
+                            <span id="rotation-progress-pct">0%</span>
+                        </div>
+                        <div class="rotation-progress-track">
+                            <div class="rotation-progress-bar" id="rotation-progress-bar"></div>
+                        </div>
+                        <div class="industry-status" id="rotation-progress-message"></div>
+                    </div>
+
+                    <div id="rotation-result" style="display: none;">
+                        <div class="stats-grid" id="rotation-metrics"></div>
+
+                        <div class="card">
+                            <div class="card-header" style="gap: 12px; flex-wrap: wrap;">
+                                <h3>📈 净值曲线</h3>
+                                <span id="rotation-best-params" class="text-muted" style="font-size: 12px;"></span>
+                            </div>
+                            <div class="rotation-chart-wrap">
+                                <div id="rotation-chart" class="rotation-chart"></div>
+                            </div>
+                            <div id="rotation-chart-note" class="industry-status"></div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>🎯 最新轮动持仓</h3>
+                                <span id="rotation-latest-date" class="text-muted" style="font-size: 12px;"></span>
+                            </div>
+                            <div class="table-container">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>行业</th>
+                                            <th>代码</th>
+                                            <th>名称</th>
+                                            <th>入选日</th>
+                                            <th>买入价</th>
+                                            <th>最新价</th>
+                                            <th>浮盈</th>
+                                            <th>评分</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="rotation-latest-picks">
+                                        <tr><td colspan="8" class="loading">暂无数据</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>🏆 参数组合 Top 5</h3>
+                                <span id="rotation-combos-sort-label" class="text-muted" style="font-size: 12px;">按样本内/外较小年化（稳健）排序</span>
+                            </div>
+                            <div class="table-container">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>行业动量窗口</th>
+                                            <th>个股动量窗口</th>
+                                            <th>调仓周期</th>
+                                            <th>总收益</th>
+                                            <th>年化</th>
+                                            <th>最大回撤</th>
+                                            <th>夏普</th>
+                                            <th>胜率</th>
+                                            <th>样本外年化</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="rotation-combos-body">
+                                        <tr><td colspan="9" class="loading">暂无数据</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>🧾 最近交易</h3>
+                                <span class="text-muted" style="font-size: 12px;">最多展示最近 300 笔</span>
+                            </div>
+                            <div class="table-container" style="max-height: 420px; overflow-y: auto;">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>调仓日</th>
+                                            <th>行业</th>
+                                            <th>代码</th>
+                                            <th>名称</th>
+                                            <th>买入价</th>
+                                            <th>卖出日</th>
+                                            <th>卖出价</th>
+                                            <th>收益</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="rotation-trades-body">
+                                        <tr><td colspan="8" class="loading">暂无数据</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>⚠️ 回测说明</h3>
+                            </div>
+                            <ul id="rotation-warnings" class="rotation-warnings"></ul>
+                        </div>
+                    </div>
+                </div>
             </div>
         </main>
     </div>
@@ -2211,7 +2511,7 @@
     </div>
 
     <script src="/static/js/dashboard_stats.js"></script>
-    <script type="module" src="/static/js/app.js?v=14"></script>
+    <script type="module" src="/static/js/app.js?v=23"></script>
     <script src="/static/js/kline_chart.js"></script>
     <script src="/static/js/init_simple.js?v=2"></script>
     <script src="/static/js/trading.js"></script>

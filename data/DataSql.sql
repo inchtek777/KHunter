@@ -1013,3 +1013,118 @@ CREATE INDEX IF NOT EXISTS idx_sfgm_code ON stock_favorite_group_member(stock_co
 -- idx_sfgm_code: 股票代码索引，用于快速查询股票所属分组
 
 
+
+-- ==================== 行业数据（东方财富/同花顺行业板块） ====================
+CREATE TABLE IF NOT EXISTS industry_board (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    industry_code TEXT NOT NULL UNIQUE,
+    -- industry_code: 行业板块代码，类型TEXT，必填，唯一，例如BK1027
+    industry_name TEXT NOT NULL,
+    -- industry_name: 行业板块名称，类型TEXT，必填，例如小金属
+    latest_price REAL,
+    -- latest_price: 最新价（行业指数点位）
+    change_amount REAL,
+    -- change_amount: 涨跌额
+    change_pct REAL,
+    -- change_pct: 涨跌幅（%）
+    total_market_cap REAL,
+    -- total_market_cap: 总市值（元）
+    turnover_rate REAL,
+    -- turnover_rate: 换手率（%）
+    up_count INTEGER,
+    -- up_count: 上涨家数
+    down_count INTEGER,
+    -- down_count: 下跌家数
+    leader_stock TEXT,
+    -- leader_stock: 领涨股票名称
+    leader_change_pct REAL,
+    -- leader_change_pct: 领涨股票涨跌幅（%）
+    rank_position INTEGER,
+    -- rank_position: 涨跌幅排名（东方财富返回顺序）
+    source TEXT NOT NULL DEFAULT 'eastmoney',
+    -- source: 数据源
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    -- updated_at: 最近更新时间
+);
+CREATE INDEX IF NOT EXISTS idx_industry_board_name ON industry_board(industry_name);
+CREATE INDEX IF NOT EXISTS idx_industry_board_rank ON industry_board(rank_position);
+
+-- 关注行业
+CREATE TABLE IF NOT EXISTS watched_industry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    industry_code TEXT NOT NULL UNIQUE,
+    -- industry_code: 行业板块代码，必填，唯一
+    industry_name TEXT NOT NULL,
+    -- industry_name: 行业板块名称，必填
+    source TEXT NOT NULL DEFAULT 'eastmoney',
+    -- source: 数据源
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    -- sort_order: 自定义排序（预留）
+    note TEXT,
+    -- note: 备注（预留）
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 关注行业日行情（行业指数日K）
+CREATE TABLE IF NOT EXISTS industry_daily_kline (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    industry_code TEXT NOT NULL,
+    -- industry_code: 行业板块代码，必填
+    industry_name TEXT,
+    -- industry_name: 行业板块名称
+    trade_date DATE NOT NULL,
+    -- trade_date: 交易日期，格式YYYY-MM-DD
+    open REAL,
+    high REAL,
+    low REAL,
+    close REAL,
+    change_pct REAL,
+    -- change_pct: 涨跌幅（%）
+    change_amount REAL,
+    -- change_amount: 涨跌额
+    volume REAL,
+    -- volume: 成交量（手）
+    amount REAL,
+    -- amount: 成交额（元）
+    amplitude REAL,
+    -- amplitude: 振幅（%）
+    turnover_rate REAL,
+    -- turnover_rate: 换手率（%）
+    source TEXT NOT NULL DEFAULT 'eastmoney',
+    -- source: 数据源
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(industry_code, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_industry_daily_code_date ON industry_daily_kline(industry_code, trade_date);
+CREATE INDEX IF NOT EXISTS idx_industry_daily_date ON industry_daily_kline(trade_date);
+
+-- ==================== 行业轮动回测缓存 ====================
+CREATE TABLE IF NOT EXISTS rotation_constituent (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    industry_code TEXT NOT NULL,
+    industry_name TEXT,
+    stock_code TEXT NOT NULL,
+    stock_name TEXT,
+    market_cap REAL,
+    -- market_cap: 流通市值（亿元）
+    source TEXT NOT NULL DEFAULT 'ths',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(industry_code, stock_code)
+);
+CREATE INDEX IF NOT EXISTS idx_rotation_constituent_industry
+    ON rotation_constituent(industry_code);
+
+CREATE TABLE IF NOT EXISTS rotation_stock_daily (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL,
+    trade_date DATE NOT NULL,
+    open REAL,
+    close REAL,
+    amount REAL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(code, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_rotation_stock_code_date
+    ON rotation_stock_daily(code, trade_date);

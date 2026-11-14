@@ -33,6 +33,8 @@ export function switchPage(page) {
         'stocks': '基础数据',
         'data-init': '初始化数据',
         'data-update': '数据更新',
+        'industry': '行业数据',
+        'industry-rotation': '行业轮动',
         'selection': '选股结果',
         'history': '历史选股',
         'trading': '账户总览',
@@ -76,6 +78,20 @@ export function switchPage(page) {
     } else if (page === 'data-update') {
         // 数据更新页面 - 初始化
         initDataUpdatePage();
+    } else if (page === 'industry') {
+        // 行业数据页面 - 初始化（东方财富行业板块 / 关注 / 日K）
+        import('./industry.js?v=3').then(module => {
+            return module.initIndustryPage();
+        }).catch(err => {
+            console.error('初始化行业数据页面失败:', err);
+        });
+    } else if (page === 'industry-rotation') {
+        // 行业轮动回测页面
+        import('./industry_rotation.js?v=6').then(module => {
+            return module.initIndustryRotationPage();
+        }).catch(err => {
+            console.error('初始化行业轮动页面失败:', err);
+        });
     } else if (page === 'history') {
         import('./stocks.js').then(module => module.loadHistoryStrategyOptions());
         // 不再自动查询，等待用户点击查询按钮
