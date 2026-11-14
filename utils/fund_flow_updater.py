@@ -50,7 +50,9 @@ class FundFlowUpdater:
             'percentage': 0
         }
     
-    def update_fund_flow_data(self, last_update_date: str, target_date: str) -> Dict:
+    def update_fund_flow_data(self, last_update_date: str, target_date: str,
+                              stock_codes: Optional[List[str]] = None,
+                              progress_callback=None, control_callback=None) -> Dict:
         """
         更新资金流向数据
         
@@ -95,13 +97,16 @@ class FundFlowUpdater:
             
             logger.info(f"需要获取 {days_to_fetch} 天的资金流向数据")
             
+            if control_callback:
+                control_callback()
+
             # 第2步：更新个股资金流向
             logger.info("第2步: 更新个股资金流向...")
             self.progress['current'] = 1
             self.progress['percentage'] = int((self.progress['current'] / self.progress['total']) * 100)
             
             try:
-                stock_result = self._update_stock_fund_flow(days_to_fetch)
+                stock_result = self._update_stock_fund_flow(days_to_fetch, stock_codes)
                 self.stats['added'] += stock_result['added']
                 self.stats['updated'] += stock_result['updated']
                 self.stats['failed'] += stock_result['failed']
@@ -109,6 +114,11 @@ class FundFlowUpdater:
                 logger.warning(f"更新个股资金流向失败: {str(e)}")
                 self.stats['failed'] += 1
             
+            if progress_callback:
+                progress_callback(33, "资金流：个股完成")
+            if control_callback:
+                control_callback()
+
             # 第3步：更新行业资金流向
             logger.info("第3步: 更新行业资金流向...")
             self.progress['current'] = 2
@@ -123,6 +133,11 @@ class FundFlowUpdater:
                 logger.warning(f"更新行业资金流向失败: {str(e)}")
                 self.stats['failed'] += 1
             
+            if progress_callback:
+                progress_callback(66, "资金流：行业完成")
+            if control_callback:
+                control_callback()
+
             # 第4步：更新板块资金流向
             logger.info("第4步: 更新板块资金流向...")
             self.progress['current'] = 3
@@ -137,6 +152,9 @@ class FundFlowUpdater:
                 logger.warning(f"更新板块资金流向失败: {str(e)}")
                 self.stats['failed'] += 1
             
+            if progress_callback:
+                progress_callback(100, "资金流：板块完成")
+
             # 第5步：返回结果
             total_time = (datetime.now() - start_time).total_seconds()
             
@@ -276,7 +294,7 @@ class FundFlowUpdater:
             # 默认获取30天
             return 30
     
-    def _update_stock_fund_flow(self, days: int) -> Dict:
+    def _update_stock_fund_flow(self, days: int, stock_codes: Optional[List[str]] = None) -> Dict:
         """
         更新个股资金流向
         
@@ -305,10 +323,23 @@ class FundFlowUpdater:
             
             logger.debug(f"时间范围: {start_date_str} 到 {end_date_str}")
             
-            # 删除该时间段的旧数据
+            # 删除该时间段的旧数据（关注范围模式下只删除目标股票）
             logger.debug(f"删除 {start_date_str} 到 {end_date_str} 的旧数据...")
-            delete_sql = "DELETE FROM stock_fund_flow WHERE flow_date >= ? AND flow_date <= ?"
-            self.db_manager.execute_with_retry(delete_sql, (start_date_str, end_date_str))
+            if stock_codes:
+                # SQLite 参数数量有限，按 500 只分批删除
+                for offset in range(0, len(stock_codes), 500):
+                    chunk = stock_codes[offset:offset + 500]
+                    placeholders = ",".join("?" for _ in chunk)
+                    delete_sql = (
+                        f"DELETE FROM stock_fund_flow WHERE flow_date >= ? AND flow_date <= ? "
+                        f"AND stock_code IN ({placeholders})"
+                    )
+                    self.db_manager.execute_with_retry(
+                        delete_sql, (start_date_str, end_date_str, *chunk)
+                    )
+            else:
+                delete_sql = "DELETE FROM stock_fund_flow WHERE flow_date >= ? AND flow_date <= ?"
+                self.db_manager.execute_with_retry(delete_sql, (start_date_str, end_date_str))
             
             # 获取新数据 - 转换日期格式为 YYYYMMDD
             logger.debug(f"获取 {start_date_str} 到 {end_date_str} 的个股资金流向数据...")
@@ -317,6 +348,20 @@ class FundFlowUpdater:
             df_fund_flow = self.fund_flow_fetcher._fetch_daily_stock_moneyflow(start_date_fmt, end_date_fmt, None)
             
             if df_fund_flow is not None and len(df_fund_flow) > 0:
+                if stock_codes:
+                    target_codes = set(stock_codes)
+                    code_column = 'code' if 'code' in df_fund_flow.columns else 'stock_code'
+                    if code_column in df_fund_flow.columns:
+                        normalized_codes = (
+                            df_fund_flow[code_column]
+                            .astype(str)
+                            .str.split(".")
+                            .str[0]
+                        )
+                        df_fund_flow = df_fund_flow[normalized_codes.isin(target_codes)]
+                if df_fund_flow.empty:
+                    logger.info("关注范围内暂无个股资金流数据")
+                    return {'added': 0, 'updated': 0, 'failed': 0}
                 # 插入新数据
                 logger.debug(f"插入 {len(df_fund_flow)} 条个股资金流向数据...")
                 added = self._save_stock_fund_flow_records(df_fund_flow)

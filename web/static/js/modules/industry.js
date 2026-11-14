@@ -16,6 +16,7 @@ const state = {
     keyword: '',
     selectedCode: null,
     selectedName: '',
+    activeTab: 'watched',
     bound: false,
     busy: false,
     loadingList: false,
@@ -143,6 +144,7 @@ function findIndustry(code) {
 
 export async function initIndustryPage() {
     bindEvents();
+    setIndustryTab(state.activeTab);
 
     const startInput = $('industry-start-date');
     const endInput = $('industry-end-date');
@@ -155,6 +157,10 @@ export async function initIndustryPage() {
 function bindEvents() {
     if (state.bound) return;
     state.bound = true;
+
+    document.querySelectorAll('[data-industry-tab]').forEach((button) => {
+        button.addEventListener('click', () => setIndustryTab(button.dataset.industryTab));
+    });
 
     $('industry-refresh-btn')?.addEventListener('click', () => loadIndustryList(true));
     $('industry-search')?.addEventListener('input', (event) => {
@@ -203,6 +209,23 @@ async function onWatchedClick(event) {
     } else if (button.dataset.action === 'unwatch') {
         await unwatchIndustry(code);
     }
+}
+
+function setIndustryTab(tab) {
+    const target = tab === 'board' ? 'board' : 'watched';
+    state.activeTab = target;
+
+    document.querySelectorAll('[data-industry-tab]').forEach((button) => {
+        const active = button.dataset.industryTab === target;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+
+    document.querySelectorAll('.industry-tab-panel').forEach((panel) => {
+        panel.classList.remove('active');
+    });
+    const panel = $(`industry-tab-${target}`);
+    if (panel) panel.classList.add('active');
 }
 
 async function loadSummary() {
@@ -499,8 +522,9 @@ async function loadDaily(code, name) {
 
     try {
         const payload = await requestJson(`/api/industry/daily/${encodeURIComponent(code)}?limit=250`);
-        renderDaily(payload.data || []);
         const rows = payload.data || [];
+        renderDaily(rows);
+        renderKlineChart(rows);
         if (rows.length) {
             const latest = rows[rows.length - 1];
             setStatus(
@@ -515,11 +539,203 @@ async function loadDaily(code, name) {
         if (tbody) {
             tbody.innerHTML = `<tr><td colspan="8" class="loading">加载失败：${escapeHtml(error.message)}</td></tr>`;
         }
+        renderKlineChart([]);
         setStatus('industry-detail-status', `加载失败：${error.message}`, 'error');
     }
 
     if (card && card.scrollIntoView) {
         card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+function movingAverage(values, period) {
+    const result = values.map(() => null);
+    let sum = 0;
+    for (let index = 0; index < values.length; index += 1) {
+        sum += values[index];
+        if (index >= period) {
+            sum -= values[index - period];
+        }
+        if (index >= period - 1) {
+            result[index] = sum / period;
+        }
+    }
+    return result;
+}
+
+function renderKlineChart(rows) {
+    const container = $('industry-kline-chart');
+    const legend = $('industry-kline-legend');
+    if (!container) return;
+
+    const data = (rows || [])
+        .map((row) => ({
+            date: String(row.trade_date || ''),
+            open: Number(row.open),
+            high: Number(row.high),
+            low: Number(row.low),
+            close: Number(row.close),
+            volume: Number(row.volume || 0),
+        }))
+        .filter(
+            (row) =>
+                row.date &&
+                Number.isFinite(row.open) &&
+                Number.isFinite(row.high) &&
+                Number.isFinite(row.low) &&
+                Number.isFinite(row.close) &&
+                row.high >= row.low
+        );
+
+    if (!data.length) {
+        container.innerHTML =
+            '<p class="text-muted" style="padding:40px;text-align:center;">暂无K线数据，点击「拉取日K」获取</p>';
+        if (legend) legend.innerHTML = '';
+        return;
+    }
+
+    // 蜡烛图最多显示最近 120 个交易日，避免柱子过密
+    const visible = data.slice(-120);
+    const closes = visible.map((row) => row.close);
+    const ma5 = movingAverage(closes, 5);
+    const ma20 = movingAverage(closes, 20);
+
+    const width = 1200;
+    const height = 420;
+    const margin = { left: 64, right: 24, top: 20, bottom: 38 };
+    const volumeHeight = 70;
+    const paneGap = 18;
+    const plotWidth = width - margin.left - margin.right;
+    const priceTop = margin.top;
+    const priceBottom = height - margin.bottom - volumeHeight - paneGap;
+    const priceHeight = priceBottom - priceTop;
+    const volumeBottom = height - margin.bottom;
+
+    let minPrice = Math.min(...visible.map((row) => row.low));
+    let maxPrice = Math.max(...visible.map((row) => row.high));
+    if (!Number.isFinite(minPrice) || !Number.isFinite(maxPrice) || maxPrice <= minPrice) {
+        minPrice -= 1;
+        maxPrice += 1;
+    }
+    const pad = (maxPrice - minPrice) * 0.06;
+    minPrice -= pad;
+    maxPrice += pad;
+
+    const maxVolume = Math.max(...visible.map((row) => row.volume), 1);
+    const step = plotWidth / visible.length;
+    const candleWidth = Math.max(1.5, Math.min(9, step * 0.62));
+    const xAt = (index) => margin.left + step * (index + 0.5);
+    const yAt = (value) =>
+        priceTop + ((maxPrice - value) / (maxPrice - minPrice)) * priceHeight;
+
+    const parts = [];
+    parts.push(
+        `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="行业日K蜡烛图">`
+    );
+    parts.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"></rect>`);
+
+    // 价格网格
+    for (let i = 0; i < 5; i += 1) {
+        const value = minPrice + ((maxPrice - minPrice) * i) / 4;
+        const y = yAt(value);
+        parts.push(
+            `<line x1="${margin.left}" y1="${y.toFixed(1)}" x2="${(width - margin.right).toFixed(1)}" y2="${y.toFixed(1)}" stroke="#eef2f7" stroke-width="1"></line>`
+        );
+        parts.push(
+            `<text x="${(margin.left - 8).toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="#64748b">${value.toFixed(2)}</text>`
+        );
+    }
+
+    // 价格/成交量分隔线
+    parts.push(
+        `<line x1="${margin.left}" y1="${(priceBottom + paneGap / 2).toFixed(1)}" x2="${(width - margin.right).toFixed(1)}" y2="${(priceBottom + paneGap / 2).toFixed(1)}" stroke="#e2e8f0" stroke-width="1"></line>`
+    );
+    parts.push(
+        `<text x="18" y="${(priceTop + priceHeight / 2).toFixed(1)}" text-anchor="middle" font-size="12" fill="#64748b" transform="rotate(-90 18 ${(priceTop + priceHeight / 2).toFixed(1)})">价格</text>`
+    );
+
+    // 蜡烛
+    visible.forEach((row, index) => {
+        const up = row.close >= row.open;
+        const color = up ? '#ef4444' : '#10b981';
+        const x = xAt(index);
+        const yHigh = yAt(row.high);
+        const yLow = yAt(row.low);
+        const yOpen = yAt(row.open);
+        const yClose = yAt(row.close);
+        const bodyTop = Math.min(yOpen, yClose);
+        const bodyHeight = Math.max(1, Math.abs(yClose - yOpen));
+
+        parts.push(
+            `<line x1="${x.toFixed(1)}" y1="${yHigh.toFixed(1)}" x2="${x.toFixed(1)}" y2="${yLow.toFixed(1)}" stroke="${color}" stroke-width="1"></line>`
+        );
+        parts.push(
+            `<rect x="${(x - candleWidth / 2).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${candleWidth.toFixed(1)}" height="${bodyHeight.toFixed(1)}" fill="${color}" stroke="${color}" stroke-width="0.5"></rect>`
+        );
+
+        const volumeTop =
+            volumeBottom - (row.volume / maxVolume) * volumeHeight;
+        parts.push(
+            `<rect x="${(x - candleWidth / 2).toFixed(1)}" y="${volumeTop.toFixed(1)}" width="${candleWidth.toFixed(1)}" height="${(volumeBottom - volumeTop).toFixed(1)}" fill="${color}" opacity="0.45"></rect>`
+        );
+    });
+
+    // MA 线
+    const buildLinePath = (values) => {
+        const points = [];
+        values.forEach((value, index) => {
+            if (value !== null && Number.isFinite(value)) {
+                points.push(`${xAt(index).toFixed(1)},${yAt(value).toFixed(1)}`);
+            }
+        });
+        if (points.length < 2) return '';
+        return points
+            .map((point, index) => `${index === 0 ? 'M' : 'L'}${point}`)
+            .join(' ');
+    };
+    const ma5Path = buildLinePath(ma5);
+    const ma20Path = buildLinePath(ma20);
+    if (ma5Path) {
+        parts.push(
+            `<path d="${ma5Path}" fill="none" stroke="#f59e0b" stroke-width="1.3" vector-effect="non-scaling-stroke"></path>`
+        );
+    }
+    if (ma20Path) {
+        parts.push(
+            `<path d="${ma20Path}" fill="none" stroke="#3b82f6" stroke-width="1.3" vector-effect="non-scaling-stroke"></path>`
+        );
+    }
+
+    // X 轴日期
+    const labelCount = 6;
+    for (let i = 0; i < labelCount; i += 1) {
+        const index = Math.min(
+            visible.length - 1,
+            Math.round((i / (labelCount - 1)) * (visible.length - 1))
+        );
+        const x = xAt(index);
+        const date = visible[index].date.slice(0, 10);
+        parts.push(
+            `<text x="${x.toFixed(1)}" y="${(height - 12).toFixed(1)}" text-anchor="middle" font-size="11" fill="#64748b">${date}</text>`
+        );
+    }
+
+    // 成交量标签
+    parts.push(
+        `<text x="${(margin.left - 8).toFixed(1)}" y="${(priceBottom + paneGap + 12).toFixed(1)}" text-anchor="end" font-size="10" fill="#94a3b8">成交量</text>`
+    );
+
+    parts.push('</svg>');
+    container.innerHTML = parts.join('');
+
+    if (legend) {
+        const latest = visible[visible.length - 1];
+        legend.innerHTML =
+            `<span class="legend-item"><span class="legend-line" style="background:#ef4444;"></span>涨</span>` +
+            `<span class="legend-item"><span class="legend-line" style="background:#10b981;"></span>跌</span>` +
+            `<span class="legend-item"><span class="legend-line" style="background:#f59e0b;"></span>MA5</span>` +
+            `<span class="legend-item"><span class="legend-line" style="background:#3b82f6;"></span>MA20</span>` +
+            `<span class="legend-item">最近 ${visible.length} 个交易日 · 最新 ${escapeHtml(latest.date)} 收盘 ${latest.close.toFixed(2)}</span>`;
     }
 }
 

@@ -262,6 +262,31 @@ class IndustryRotationService:
         finally:
             conn.close()
 
+    def get_constituents(self, industry: Dict[str, Any], limit: int = 10000) -> List[Dict[str, Any]]:
+        """获取行业成分股（初始化数据用，默认返回全部）"""
+        return self._load_constituents(industry, limit)
+
+    def ensure_industry_index_data(
+        self, industries: List[Dict[str, Any]], years: int = 10
+    ) -> pd.DataFrame:
+        """确保关注行业有最近 N 年的行业指数数据（缺失时从同花顺补）"""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT MAX(trade_date) AS max_date FROM industry_daily_kline"
+            ).fetchone()
+        finally:
+            conn.close()
+        if row and row["max_date"]:
+            end = pd.Timestamp(str(row["max_date"])[:10]).date()
+        else:
+            end = datetime.now().date()
+        try:
+            start = end.replace(year=end.year - years)
+        except ValueError:
+            start = end - timedelta(days=365 * years)
+        return self._load_industry_indices(industries, start, end)
+
     def get_config(self) -> Dict[str, Any]:
         """前端初始化信息：关注行业 + 行业指数覆盖 + 默认参数"""
         industries = self.get_watched_industries()

@@ -72,15 +72,18 @@ export function switchPage(page) {
     } else if (page === 'stocks') {
         import('./stocks.js').then(module => module.loadStocks());
     } else if (page === 'data-init') {
-        // 初始化数据页面 - 重置表单
+        // 初始化数据页面 - 重置表单并刷新关注行业范围
         console.log('调用 resetInitForm()');
         resetInitForm();
+        if (typeof loadInitScopeSummary === 'function') {
+            loadInitScopeSummary();
+        }
     } else if (page === 'data-update') {
         // 数据更新页面 - 初始化
         initDataUpdatePage();
     } else if (page === 'industry') {
         // 行业数据页面 - 初始化（东方财富行业板块 / 关注 / 日K）
-        import('./industry.js?v=3').then(module => {
+        import('./industry.js?v=4').then(module => {
             return module.initIndustryPage();
         }).catch(err => {
             console.error('初始化行业数据页面失败:', err);

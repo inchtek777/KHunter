@@ -981,7 +981,7 @@ class StockDataFetcher:
 
         return None
 
-    def get_stock_market_cap(self, max_retries=3) -> dict:
+    def get_stock_market_cap(self, stock_codes: list = None, max_retries=3) -> dict:
         """
         从 Tushare daily_basic 接口批量获取股票市值信息
         
@@ -1050,6 +1050,12 @@ class StockDataFetcher:
                             logger.debug(f"处理市值数据失败: {e}")
                             continue
                     
+                    if stock_codes:
+                        target_codes = set(stock_codes)
+                        market_caps = {
+                            code: cap for code, cap in market_caps.items()
+                            if code in target_codes
+                        }
                     if market_caps:
                         logger.info(f"✓ 成功获取 {len(market_caps)} 只股票的市值信息")
                         return market_caps
@@ -1064,7 +1070,7 @@ class StockDataFetcher:
         logger.warning("获取市值信息失败，返回空字典")
         return {}
     
-    def update_stock_market_cap(self, db_manager, max_retries=3) -> dict:
+    def update_stock_market_cap(self, db_manager, stock_codes: list = None, max_retries=3) -> dict:
         """
         批量更新所有股票的市值信息到数据库
         
@@ -1087,9 +1093,31 @@ class StockDataFetcher:
         """
         logger.info("开始批量更新股票市值信息...")
         
-        # 获取最新市值信息
-        market_caps = self.get_stock_market_cap(max_retries)
-        
+        if stock_codes is None:
+            try:
+                rows = db_manager.query(
+                    "SELECT code FROM stock_basic WHERE is_deleted = 0"
+                )
+                stock_codes = [row['code'] for row in rows]
+            except Exception as exc:
+                logger.warning(f"获取市值更新股票池失败: {exc}")
+                stock_codes = []
+
+        # 获取最新市值信息（Tushare 优先）
+        market_caps = self.get_stock_market_cap(stock_codes, max_retries)
+
+        # Tushare 不可用或部分缺失时，降级腾讯财经补齐（腾讯返回元，DB 存亿元）
+        if stock_codes:
+            missing_codes = [code for code in stock_codes if code not in market_caps]
+            if missing_codes:
+                logger.warning(
+                    "Tushare 市值缺失 %s 只，降级腾讯财经补齐", len(missing_codes)
+                )
+                tencent_caps = self._fetch_market_cap_tencent(missing_codes)
+                for code, cap in tencent_caps.items():
+                    if cap and cap > 0:
+                        market_caps[code] = cap / 1e8
+
         if not market_caps:
             logger.warning("未获取到市值信息，更新失败")
             return {

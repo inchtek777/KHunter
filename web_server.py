@@ -2835,11 +2835,12 @@ def start_update():
         更新任务信息
     """
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         update_types = data.get('updateTypes', None)
+        scope = data.get('scope', 'watched')
         
         # 启动更新任务
-        result = data_collection_service.start_update(update_types)
+        result = data_collection_service.start_update(update_types, scope)
         
         return jsonify({
             'success': result['success'],

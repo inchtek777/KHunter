@@ -15,36 +15,13 @@ function startInitialization() {
         console.log('用户点击了开始初始化按钮');
         
         // 确认初始化
-        if (!confirm('确定要开始数据初始化吗？这可能需要较长时间。')) {
+        if (!confirm('确定要初始化「关注行业 + 行业成分股」吗？\n\n将初始化关注行业指数（10年）以及成分股基础信息、3年日K，可能需要较长时间。')) {
             console.log('用户取消了初始化');
             return;
         }
-        
-        // 获取初始化选项
-        const initBasicData = document.getElementById('init-basic-data').checked;
-        const initHistoryData = document.getElementById('init-history-data').checked;
-        const initIndustryData = document.getElementById('init-industry-data').checked;
-        const initSectorData = document.getElementById('init-sector-data').checked;
-        const initFundFlowData = document.getElementById('init-fund-flow-data').checked;
-        
-        // 检查是否至少选择了一项
-        if (!initBasicData && !initHistoryData && !initIndustryData && !initSectorData && !initFundFlowData) {
-            alert('请至少选择一项初始化数据');
-            return;
-        }
-        
-        // 构建初始化选项
-        const options = {
-            basicData: initBasicData,
-            historyData: initHistoryData,
-            industryData: initIndustryData,
-            sectorData: initSectorData,
-            fundFlowData: initFundFlowData
-        };
-        
+
         console.log('发送初始化请求到后端...');
-        console.log('初始化选项:', options);
-        
+
         // 调用后端API启动初始化
         fetch('/api/data/init/start', {
             method: 'POST',
@@ -53,7 +30,7 @@ function startInitialization() {
             },
             body: JSON.stringify({
                 type: 'custom',
-                options: options
+                options: { scope: 'watched_industries' }
             })
         })
         .then(response => response.json())
@@ -173,7 +150,7 @@ function startReinit() {
     try {
         console.log('用户点击了重新初始化按钮');
         
-        if (!confirm('⚠️ 警告：重新初始化将删除所有现有数据（基础数据 + K线数据）！\n\n确定要继续吗？')) {
+        if (!confirm('⚠️ 警告：重新初始化将清空 stock_basic 与 stock_kline，然后只重建「关注行业 + 行业成分股」！\n\n确定要继续吗？')) {
             console.log('用户取消了重新初始化');
             return;
         }
@@ -441,11 +418,37 @@ function showInitError(data) {
 }
 
 /**
+ * 展示当前关注行业数量
+ */
+async function loadInitScopeSummary() {
+    const el = document.getElementById('init-scope-summary');
+    if (!el) return;
+    try {
+        const response = await fetch('/api/industry/watched');
+        const result = await response.json();
+        if (result.success) {
+            const list = result.data || [];
+            el.textContent = list.length
+                ? `当前关注 ${list.length} 个行业；将初始化这些行业的全部成分股。`
+                : '当前没有关注行业，请先到「行业数据」页添加关注。';
+            el.classList.toggle('init-scope-warn', list.length === 0);
+        } else {
+            el.textContent = '读取关注行业失败：' + (result.error || '未知错误');
+            el.classList.add('init-scope-warn');
+        }
+    } catch (error) {
+        el.textContent = '读取关注行业失败：' + error.message;
+        el.classList.add('init-scope-warn');
+    }
+}
+
+/**
  * 页面加载时初始化
  */
 document.addEventListener('DOMContentLoaded', function() {
     // 初始化完成
     console.log('超简洁版初始化页面已加载');
+    loadInitScopeSummary();
     
     // 注册全局 WebSocket 监听器（备用方式）
     // 这确保即使 HTTP 轮询失败，也能通过 WebSocket 收到完成状态

@@ -27,6 +27,10 @@ from datetime import timedelta
 logger = logging.getLogger(__name__)
 
 
+class UpdateCancelled(Exception):
+    """数据更新被用户取消"""
+
+
 class DataCollectionService:
     """数据采集服务类"""
     
@@ -78,6 +82,9 @@ class DataCollectionService:
             'progress': 0,
             'total': 0,
             'current_task': '',
+            'scope': 'watched',
+            'critical_failure': False,
+            'already_latest': False,
             'success': 0,
             'failed': 0,
             'message': '',
@@ -100,6 +107,9 @@ class DataCollectionService:
         # 线程锁
         self.init_lock = threading.Lock()
         self.update_lock = threading.Lock()
+        # 协作式取消/暂停信号
+        self.update_cancel_event = threading.Event()
+        self.update_pause_event = threading.Event()
     
     def get_init_config(self) -> Dict[str, Any]:
         """
@@ -108,9 +118,21 @@ class DataCollectionService:
         Returns:
             dict: 初始化配置信息
         """
+        watched_count = 0
+        try:
+            row = self.db_manager.query_one(
+                "SELECT COUNT(*) AS count FROM watched_industry"
+            )
+            watched_count = (row or {}).get("count", 0)
+        except Exception:
+            watched_count = 0
+
         return {
             'types': ['full', 'structure_only', 'custom'],
-            'defaultType': 'full',
+            'defaultType': 'custom',
+            'scope': 'watched_industries',
+            'scopeDescription': '仅初始化已关注行业、行业指数和行业成分股',
+            'watchedCount': watched_count,
             'customOptions': {
                 'structure': True,
                 'basicData': True,
@@ -132,30 +154,39 @@ class DataCollectionService:
         Returns:
             dict: 更新配置信息
         """
+        watched_count = 0
+        try:
+            row = self.db_manager.query_one(
+                "SELECT COUNT(*) AS count FROM watched_industry"
+            )
+            watched_count = (row or {}).get("count", 0)
+        except Exception:
+            watched_count = 0
+
         return {
+            'scopes': [
+                {'value': 'watched', 'label': '关注行业及成分股'},
+                {'value': 'all', 'label': '全市场'},
+            ],
+            'defaultScope': 'watched',
+            'watchedCount': watched_count,
             'updateTypes': [
-                'basic_data',
-                'history_data',
-                'industry_data',
-                'sector_data',
-                'fund_flow_data',
-                'event_data'
+                'kline',
+                'fund_flow',
+                'market_cap',
+                'new_stock'
             ],
             'defaultUpdateTypes': [
-                'basic_data',
-                'history_data',
-                'industry_data',
-                'sector_data',
-                'fund_flow_data',
-                'event_data'
+                'kline',
+                'fund_flow',
+                'market_cap',
+                'new_stock'
             ],
             'updateFrequency': {
-                'basic_data': 'weekly',
-                'history_data': 'daily',
-                'industry_data': 'daily',
-                'sector_data': 'daily',
-                'fund_flow_data': 'daily',
-                'event_data': 'daily'
+                'kline': 'daily',
+                'fund_flow': 'daily',
+                'market_cap': 'daily',
+                'new_stock': 'daily'
             }
         }
     
@@ -280,7 +311,21 @@ class DataCollectionService:
                 'success': False,
                 'message': '已有初始化任务正在运行'
             }
-        
+
+        # 重新初始化会清空 stock_basic/stock_kline，先确认有可重建的关注范围
+        try:
+            row = self.db_manager.query_one(
+                "SELECT COUNT(*) AS count FROM watched_industry"
+            )
+            watched_count = (row or {}).get("count", 0)
+        except Exception:
+            watched_count = 0
+        if watched_count == 0:
+            return {
+                'success': False,
+                'message': '请先在「行业数据」页关注至少 1 个行业，再执行重新初始化'
+            }
+
         task_id = f"REINIT_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         thread = threading.Thread(
@@ -319,9 +364,8 @@ class DataCollectionService:
                 self.init_status['logs'] = []
                 self.init_status['tasks'] = []
                 
-                years = 3
                 self._add_init_log(f"⚠ 重新初始化任务 {task_id} 已启动")
-                self._add_init_log(f"  - 全量初始化，K线年数: {years}")
+                self._add_init_log("  - 清空后只重建关注行业及成分股，K线 3 年")
                 
                 try:
                     from web_server import emit_init_progress
@@ -335,24 +379,10 @@ class DataCollectionService:
                 self._add_init_log("✓ 已删除现有数据")
                 self._update_progress(10)
                 
-                # 步骤2: 使用统一初始化入口全量初始化（带进度回调）
-                self._add_init_log("⟳ 正在全量初始化...")
-
-                # 创建进度回调（映射到 10%-100% 区间）
-                def reinit_progress_cb(progress_pct, message):
-                    mapped = 10 + int(progress_pct * 0.9)  # 10 + 0~90
-                    self.init_status['current_task'] = message
-                    self._update_progress(mapped)
-
-                data_initializer = DataInitializer(
-                    self.db_manager,
-                    self.stock_data_fetcher,
-                    None,
-                    None,
-                    progress_callback=reinit_progress_cb
-                )
-                data_initializer.init_full_data(years=years)
-                self._add_init_log("✓ 全量初始化完成")
+                # 步骤2: 只重建关注行业及成分股
+                self._add_init_log("⟳ 正在重建关注行业及成分股...")
+                self._initialize_watched_scope()
+                self._add_init_log("✓ 关注范围重新初始化完成")
                 self._update_progress(100)
                 
                 self.init_status['status'] = 'completed'
@@ -366,11 +396,18 @@ class DataCollectionService:
                 logger.error(f"重新初始化失败: {e}")
     
     def _delete_all_data(self):
-        """删除所有数据表内容"""
+        """删除 stock_kline / stock_basic 表内容并提交。
+
+        注意：DBManager.execute() 不会自动提交。若这里不放进事务，
+        DELETE 会在连接上开启隐式事务；后续 DataInitializer 执行
+        BEGIN IMMEDIATE 时会触发“脏连接”回滚，把删除操作一并回滚，
+        导致重新初始化后旧的全量数据仍留在库中。
+        """
         try:
-            self.db_manager.execute("DELETE FROM stock_kline")
-            self.db_manager.execute("DELETE FROM stock_basic")
-            logger.info("已清空 stock_kline 和 stock_basic 表")
+            with self.db_manager.transaction():
+                self.db_manager.execute("DELETE FROM stock_kline")
+                self.db_manager.execute("DELETE FROM stock_basic")
+            logger.info("已清空并提交 stock_kline 和 stock_basic 表")
         except Exception as e:
             logger.error(f"删除数据失败: {e}")
             raise
@@ -409,11 +446,18 @@ class DataCollectionService:
                 'taskId': None
             }
         
-        # 检查数据是否已初始化
-        if self._check_data_initialized():
+        # 初始化范围收敛为关注行业及成分股：至少要有 1 个关注行业
+        try:
+            row = self.db_manager.query_one(
+                "SELECT COUNT(*) AS count FROM watched_industry"
+            )
+            watched_count = (row or {}).get("count", 0)
+        except Exception:
+            watched_count = 0
+        if watched_count == 0:
             return {
                 'success': False,
-                'message': '初始化已经完成，无需再次初始化',
+                'message': '请先在「行业数据」页关注至少 1 个行业',
                 'taskId': None
             }
         
@@ -434,6 +478,77 @@ class DataCollectionService:
             'taskId': task_id
         }
     
+    def _resolve_watched_universe(self):
+        """解析初始化范围：关注行业 + 行业成分股"""
+        from trading.industry_rotation import IndustryRotationService
+
+        rotation = IndustryRotationService()
+        industries = rotation.get_watched_industries()
+        if not industries:
+            raise RuntimeError("尚未关注任何行业，请先在「行业数据」页添加关注行业")
+
+        stock_dict = {}
+        total = len(industries)
+        for index, industry in enumerate(industries):
+            self.init_status['current_task'] = (
+                f"抓取行业成分股 {index + 1}/{total}：{industry['industry_name']}"
+            )
+            self._update_progress(10 + int(4 * (index + 1) / max(total, 1)))
+            items = rotation.get_constituents(industry, limit=10000)
+            for item in items:
+                stock_dict[item["stock_code"]] = item["stock_name"]
+
+        try:
+            deleted_codes = set(self.db_manager.get_deleted_stock_codes())
+        except Exception:
+            deleted_codes = set()
+        stock_codes = [code for code in stock_dict if code not in deleted_codes]
+        if not stock_codes:
+            raise RuntimeError("关注行业的成分股为空，无法初始化")
+
+        self._add_init_log(
+            f"初始化范围：{len(industries)} 个关注行业，{len(stock_codes)} 只成分股"
+        )
+        return rotation, industries, stock_codes, stock_dict
+
+    def _initialize_watched_scope(self):
+        """只初始化关注行业指数 + 成分股基础数据 + 成分股 K 线"""
+        rotation, industries, stock_codes, stock_dict = self._resolve_watched_universe()
+
+        def progress_cb(progress_pct, message):
+            self.init_status['current_task'] = message
+            self._update_progress(max(10, min(85, int(progress_pct))))
+
+        data_initializer = DataInitializer(
+            self.db_manager,
+            self.stock_data_fetcher,
+            None,
+            None,
+            progress_callback=progress_cb,
+        )
+
+        self.init_status['current_task'] = f"基础数据：{len(stock_codes)} 只成分股"
+        self._add_init_log(f"⟳ 初始化成分股基础数据：{len(stock_codes)} 只")
+        self._update_progress(10)
+        data_initializer._init_basic_data(stock_codes, stock_dict)
+        self._update_progress(15)
+
+        self.init_status['current_task'] = f"K线数据：{len(stock_codes)} 只成分股（3年）"
+        self._add_init_log(f"⟳ 初始化成分股 K 线：{len(stock_codes)} 只，3 年（强制全量）")
+        data_initializer._init_kline_history_data(
+            stock_codes,
+            years=3,
+            progress_range=(15, 85),
+            force_full=True,
+        )
+
+        self.init_status['current_task'] = "补齐关注行业指数（10年）"
+        self._add_init_log(f"⟳ 补齐关注行业指数：{len(industries)} 个行业（10年）")
+        self._update_progress(88)
+        rotation.ensure_industry_index_data(industries, years=10)
+        self._update_progress(100)
+        self._add_init_log("✓ 关注行业、行业指数、成分股数据初始化完成")
+
     def _run_initialization(self, task_id: str, init_type: str, options: Optional[Dict]):
         """
         执行初始化任务（在后台线程中运行）
@@ -471,44 +586,9 @@ class DataCollectionService:
                 except ImportError:
                     pass
                 
-                # 初始化数据（统一入口，带进度回调）
-                if init_type == 'custom' or init_type == 'full':
-                    # 使用统一初始化入口
-                    self.init_status['current_task'] = '初始化基础数据和K线'
-                    self._add_init_log("⟳ 正在初始化数据...")
-
-                    try:
-                        from web_server import emit_init_progress
-                        emit_init_progress()
-                    except ImportError:
-                        pass
-
-                    # 获取股票列表
-                    stock_dict = self.akshare_fetcher.get_all_stock_codes()
-
-                    # 创建进度回调（映射到 0%-100%）
-                    def init_progress_cb(progress_pct, message):
-                        self.init_status['current_task'] = message
-                        self._update_progress(progress_pct)
-
-                    # 使用 DataInitializer 统一入口
-                    data_initializer = DataInitializer(
-                        self.db_manager,
-                        self.stock_data_fetcher,
-                        None,
-                        None,
-                        progress_callback=init_progress_cb
-                    )
-                    data_initializer.init_full_data(years=3, stock_dict=stock_dict)
-
-                    self.init_status['progress'] = 100
-                    self._add_init_log("✓ 数据初始化完成")
-
-                    try:
-                        from web_server import emit_init_progress
-                        emit_init_progress()
-                    except ImportError:
-                        pass
+                # 初始化范围：关注行业 + 行业指数 + 行业成分股
+                self._add_init_log("⟳ 正在初始化关注行业及成分股...")
+                self._initialize_watched_scope()
                 
                 # 完成
                 self.init_status['progress'] = 100
@@ -649,7 +729,8 @@ class DataCollectionService:
             'message': '初始化任务已恢复'
         }
     
-    def start_update(self, update_types: Optional[List[str]] = None) -> Dict[str, Any]:
+    def start_update(self, update_types: Optional[List[str]] = None,
+                     scope: str = 'watched') -> Dict[str, Any]:
         """
         开始数据更新
         
@@ -667,13 +748,34 @@ class DataCollectionService:
                 'taskId': None
             }
         
+        # 关注范围模式要求至少有一个关注行业
+        scope = 'all' if str(scope).lower() == 'all' else 'watched'
+        if scope == 'watched':
+            try:
+                row = self.db_manager.query_one(
+                    "SELECT COUNT(*) AS count FROM watched_industry"
+                )
+                watched_count = (row or {}).get("count", 0)
+            except Exception:
+                watched_count = 0
+            if watched_count == 0:
+                return {
+                    'success': False,
+                    'message': '请先在「行业数据」页关注至少 1 个行业',
+                    'taskId': None
+                }
+
+        # 清理上次取消/暂停信号
+        self.update_cancel_event.clear()
+        self.update_pause_event.clear()
+
         # 生成任务ID
         task_id = f"UPDATE_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         # 在后台线程中执行更新
         thread = threading.Thread(
             target=self._run_update,
-            args=(task_id, update_types),
+            args=(task_id, update_types, scope),
             daemon=True
         )
         thread.start()
@@ -684,7 +786,98 @@ class DataCollectionService:
             'taskId': task_id
         }
     
-    def _run_update(self, task_id: str, update_types: Optional[List[str]]):
+    def _set_update_progress(self, progress: int, message: str):
+        """更新进度与当前任务（轮询接口读取）"""
+        self.update_status['progress'] = max(0, min(100, int(progress)))
+        self.update_status['current_task'] = message
+        self.update_status['message'] = message
+
+    def _check_update_control(self):
+        """检查取消/暂停信号；暂停时阻塞，取消时抛异常"""
+        if self.update_cancel_event.is_set():
+            raise UpdateCancelled("更新已取消")
+        while self.update_pause_event.is_set():
+            if self.update_cancel_event.is_set():
+                raise UpdateCancelled("更新已取消")
+            time.sleep(0.5)
+
+    def _resolve_update_stock_codes(self) -> List[str]:
+        """关注范围模式的股票池：关注行业 → 行业成分股"""
+        from trading.industry_rotation import IndustryRotationService
+
+        rotation = IndustryRotationService()
+        industries = rotation.get_watched_industries()
+        if not industries:
+            raise RuntimeError("尚未关注任何行业，请先在「行业数据」页添加关注行业")
+
+        codes = set()
+        total = len(industries)
+        for index, industry in enumerate(industries):
+            self._check_update_control()
+            self._set_update_progress(
+                8 + int(7 * (index + 1) / max(total, 1)),
+                f"解析关注行业成分股 {index + 1}/{total}：{industry['industry_name']}",
+            )
+            for item in rotation.get_constituents(industry, limit=10000):
+                codes.add(item["stock_code"])
+
+        try:
+            deleted_codes = set(self.db_manager.get_deleted_stock_codes())
+        except Exception:
+            deleted_codes = set()
+        codes -= deleted_codes
+        self._add_update_log(f"关注范围股票池: {len(codes)} 只（所属 {total} 个行业）")
+        return sorted(codes)
+
+    def _get_kline_coverage(self, stock_codes: List[str], target_date: str):
+        """返回 (已有目标日期的股票数, 总数)"""
+        if not stock_codes:
+            return 0, 0
+        covered = 0
+        for offset in range(0, len(stock_codes), 500):
+            chunk = stock_codes[offset:offset + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            try:
+                rows = self.db_manager.query(
+                    f"""
+                    SELECT code, MAX(date) AS max_date
+                    FROM stock_kline
+                    WHERE code IN ({placeholders})
+                    GROUP BY code
+                    """,
+                    tuple(chunk),
+                )
+                for row in rows:
+                    if str(row.get("max_date") or "") >= target_date:
+                        covered += 1
+            except Exception as exc:
+                logger.warning("检查K线覆盖失败: %s", exc)
+        return covered, len(stock_codes)
+
+    def pause_update(self) -> Dict[str, Any]:
+        """暂停更新（在步骤/批次边界生效）"""
+        if not self.update_status['running']:
+            return {'success': False, 'message': '没有正在运行的更新任务'}
+        self.update_pause_event.set()
+        self.update_status['paused'] = True
+        self.update_status['status'] = 'paused'
+        self.update_status['message'] = '更新已暂停'
+        self._add_update_log("⏸ 更新任务已暂停（将在当前批次结束后生效）")
+        return {'success': True, 'message': '更新任务已暂停'}
+
+    def resume_update(self) -> Dict[str, Any]:
+        """恢复更新"""
+        if not self.update_status.get('paused'):
+            return {'success': False, 'message': '没有暂停的更新任务'}
+        self.update_pause_event.clear()
+        self.update_status['paused'] = False
+        self.update_status['status'] = 'running'
+        self.update_status['message'] = '更新已恢复'
+        self._add_update_log("▶ 更新任务已恢复")
+        return {'success': True, 'message': '更新任务已恢复'}
+
+    def _run_update(self, task_id: str, update_types: Optional[List[str]],
+                    scope: str = 'watched'):
         """
         执行更新任务（在后台线程中运行）
         
@@ -732,13 +925,46 @@ class DataCollectionService:
                     'reduce_plan_refreshed': 0,
                     'reduce_plan_failed': 0
                 }
-            
-            self._add_update_log(f"✓ 更新任务 {task_id} 已启动")
+                self.update_status['progress'] = 0
+                self.update_status['current_task'] = '准备'
+                self.update_status['success'] = 0
+                self.update_status['failed'] = 0
+                self.update_status['scope'] = scope
+                self.update_status['critical_failure'] = False
+                self.update_status['already_latest'] = False
+                self.update_status['paused'] = False
+
+            self.update_cancel_event.clear()
+            self.update_pause_event.clear()
+            stats = {}
+
+            self._add_update_log(f"✓ 更新任务 {task_id} 已启动（范围: {'全市场' if scope == 'all' else '关注行业及成分股'}）")
+
+            # 兼容旧类型名（basic_data/history_data/fund_flow_data）与新类型名（kline/fund_flow）
+            if isinstance(update_types, str):
+                update_types = [update_types]
+            raw_types = update_types or []
+            normalized_types = set()
+            for type_name in raw_types:
+                name = str(type_name).lower()
+                if name in ('kline', 'history_data', 'history', 'kline_data'):
+                    normalized_types.add('kline')
+                elif name in ('fund_flow', 'fund_flow_data', 'moneyflow'):
+                    normalized_types.add('fund_flow')
+                elif name in ('market_cap', 'marketcap'):
+                    normalized_types.add('market_cap')
+                elif name in ('new_stock', 'basic_data', 'basic'):
+                    normalized_types.add('new_stock')
+            all_types = not normalized_types
+            do_kline = all_types or 'kline' in normalized_types
+            do_fund = all_types or 'fund_flow' in normalized_types
+            do_market_cap = all_types or 'market_cap' in normalized_types
+            do_new_stock = scope == 'all' and (all_types or 'new_stock' in normalized_types)
             
             # 【第1步】检查交易时间和更新条件
             self._add_update_log("【第1步】检查交易时间和更新条件...")
             validator = TradingTimeValidator()
-            is_valid, error_msg, target_date = validator.validate_update_time()
+            is_valid, error_msg, target_date = validator.validate_update_time(check_updated=False)
             
             if not is_valid:
                 # 交易时间验证失败
@@ -752,9 +978,6 @@ class DataCollectionService:
             
             # 记录目标更新日期
             self._add_update_log(f"✓ 目标更新日期: {target_date}")
-            
-            # 记录更新开始（已弃用空操作，保留以兼容流程日志）
-            validator.record_update_start(target_date)
             
             # 【第2步】查询上次更新日期（前置，用于幂等判断）
             self._add_update_log("【第2步】查询上次更新日期...")
@@ -772,147 +995,178 @@ class DataCollectionService:
                 logger.error(f"查询上次更新日期失败: {str(e)}")
                 last_update_date = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d')
             
-            # 【幂等保护】数据已是最新则跳过全部更新步骤，直接进入后续流程（策略运行）
-            # 判断依据：上次更新完成日期(last_update_date) >= 目标更新日期(target_date)
-            if last_update_date and last_update_date >= target_date:
-                # 记录跳过原因，便于运维在日志中确认幂等生效
-                self._add_update_log(
-                    f"ℹ 数据已是最新（上次更新日期 {last_update_date} >= 目标更新日期 {target_date}），"
-                    f"跳过全部更新步骤（新股票/股票列表/K线/资金流向/市值/减持缓存/市场温度/风控），直接结束更新任务"
-                )
-                logger.info(
-                    f"数据已是最新（{last_update_date} >= {target_date}），幂等跳过全部更新步骤，"
-                    f"流水线将直接进入策略运行"
-                )
-                # 闭合更新状态：标记为完成且成功，确保上层 PipelineOrchestrator 判定为 success 并继续执行策略
-                with self.update_lock:
-                    self.update_status['status'] = 'completed'   # 任务整体完成
-                    self.update_status['success'] = 1            # 标记为成功，避免上层误判为失败
-                    self.update_status['skipped'] = False        # 非 skipped，确保进入策略运行
-                    self.update_status['already_latest'] = True  # 标记数据已最新（供前端/通知展示）
-                    self.update_status['end_time'] = datetime.now().isoformat()
-                    self.update_status['message'] = f'数据已是最新（{last_update_date}），跳过全部更新步骤'
-                # 幂等写入完成记录（覆盖同一 target_date 的 update_log，状态保持 completed，不影响下次幂等判断）
-                try:
-                    validator.record_update_complete(target_date, {})
-                except Exception as e:
-                    logger.warning(f"记录幂等跳过完成异常（可忽略）: {str(e)}")
-                return
-            
+            # 注：不再仅凭本地更新日志提前结束；后续按目标股票池的实际 K 线覆盖判断。
+            self._set_update_progress(5, "已确定目标日期，解析股票池")
+
             # 【第3步】检测并初始化新股票（优先级最高）
-            self._add_update_log("【第3步】检测并初始化新股票...")
-            try:
-                # 创建新股票检测器
-                stock_data_fetcher = StockDataFetcher()
-                data_initializer = DataInitializer(
-                    self.db_manager,
-                    stock_data_fetcher,
-                    None,  # kline_fetcher
-                    None   # fund_flow_fetcher
-                )
+            self._add_update_log("【第3步】检测并初始化新股票（仅全市场模式）...")
+            if scope == 'all' and do_new_stock:
+                try:
+                    # 创建新股票检测器
+                    stock_data_fetcher = StockDataFetcher()
+                    data_initializer = DataInitializer(
+                        self.db_manager,
+                        stock_data_fetcher,
+                        None,  # kline_fetcher
+                        None   # fund_flow_fetcher
+                    )
                 
-                detector = NewStockDetector(
-                    self.db_manager,
-                    stock_data_fetcher,
-                    data_initializer
-                )
+                    detector = NewStockDetector(
+                        self.db_manager,
+                        stock_data_fetcher,
+                        data_initializer
+                    )
                 
-                # 执行新股票检测和初始化
-                new_stock_result = detector.detect_and_init_new_stocks(years=3, days=30)
+                    # 执行新股票检测和初始化
+                    new_stock_result = detector.detect_and_init_new_stocks(years=3, days=30)
                 
-                # 更新统计信息
-                with self.update_lock:
-                    self.update_status['totalStats']['new_stock_detected'] = new_stock_result.get('detected', 0)
-                    self.update_status['totalStats']['new_stock_initialized'] = new_stock_result.get('initialized', 0)
+                    # 更新统计信息
+                    with self.update_lock:
+                        self.update_status['totalStats']['new_stock_detected'] = new_stock_result.get('detected', 0)
+                        self.update_status['totalStats']['new_stock_initialized'] = new_stock_result.get('initialized', 0)
                 
-                # 记录结果
-                if new_stock_result['success']:
-                    self._add_update_log(f"✓ 新股票检测完成: 检测 {new_stock_result['detected']} 只，初始化 {new_stock_result['initialized']} 只，失败 {new_stock_result['failed']} 只")
+                    # 记录结果
+                    if new_stock_result['success']:
+                        self._add_update_log(f"✓ 新股票检测完成: 检测 {new_stock_result['detected']} 只，初始化 {new_stock_result['initialized']} 只，失败 {new_stock_result['failed']} 只")
                     
-                    # 如果有失败的股票，记录警告
-                    if new_stock_result['failed'] > 0:
-                        failed_stocks = new_stock_result.get('failed_stocks', [])
-                        self._add_update_log(f"⚠ 初始化失败的股票: {', '.join(failed_stocks[:5])}")
-                else:
+                        # 如果有失败的股票，记录警告
+                        if new_stock_result['failed'] > 0:
+                            failed_stocks = new_stock_result.get('failed_stocks', [])
+                            self._add_update_log(f"⚠ 初始化失败的股票: {', '.join(failed_stocks[:5])}")
+                    else:
+                        # 新股票初始化失败，但不影响后续更新
+                        self._add_update_log(f"⚠ 新股票检测失败: {new_stock_result.get('message', '未知错误')}")
+                        logger.warning(f"新股票检测失败: {new_stock_result.get('message', '未知错误')}")
+            
+                except Exception as e:
                     # 新股票初始化失败，但不影响后续更新
-                    self._add_update_log(f"⚠ 新股票检测失败: {new_stock_result.get('message', '未知错误')}")
-                    logger.warning(f"新股票检测失败: {new_stock_result.get('message', '未知错误')}")
+                    self._add_update_log(f"⚠ 新股票检测异常: {str(e)}")
+                    logger.warning(f"新股票检测异常: {str(e)}")
             
-            except Exception as e:
-                # 新股票初始化失败，但不影响后续更新
-                self._add_update_log(f"⚠ 新股票检测异常: {str(e)}")
-                logger.warning(f"新股票检测异常: {str(e)}")
-            
-            # 【第4步】获取所有股票列表
-            self._add_update_log("【第4步】获取所有股票列表...")
+            else:
+                self._add_update_log("ℹ 关注范围模式：跳过全市场新股检测")
+
+            # 【第4步】解析更新股票池（关注范围 / 全市场）
+            self._add_update_log("【第4步】解析更新股票池...")
             try:
-                sql = "SELECT DISTINCT code FROM stock_basic WHERE is_deleted = 0 ORDER BY code"
-                result = self.db_manager.query(sql)
-                stock_codes = [row['code'] for row in result] if result else []
-                
-                self._add_update_log(f"✓ 获取股票列表完成: {len(stock_codes)} 只股票")
-            
+                if scope == 'all':
+                    sql = "SELECT DISTINCT code FROM stock_basic WHERE is_deleted = 0 ORDER BY code"
+                    result = self.db_manager.query(sql)
+                    stock_codes = [row['code'] for row in result] if result else []
+                    self._add_update_log(f"✓ 全市场股票池: {len(stock_codes)} 只")
+                else:
+                    stock_codes = self._resolve_update_stock_codes()
+                    self._add_update_log(f"✓ 关注范围股票池: {len(stock_codes)} 只")
             except Exception as e:
                 self._add_update_log(f"✗ 获取股票列表失败: {str(e)}")
                 logger.error(f"获取股票列表失败: {str(e)}")
-                stock_codes = []
+                raise
+
+            if not stock_codes:
+                raise RuntimeError("更新股票池为空，无法执行更新")
+
+            # 按实际 K 线覆盖判断是否已最新，不再只信任本地更新日志
+            covered, total_codes = self._get_kline_coverage(stock_codes, target_date)
+            coverage_ratio = covered / max(total_codes, 1)
+            self._add_update_log(
+                f"✓ K线覆盖检查: {covered}/{total_codes} 只已有 {target_date} 数据"
+            )
+
+            effective_last_update = last_update_date
+            if last_update_date >= target_date and coverage_ratio >= 0.98:
+                self.update_status['already_latest'] = True
+                do_kline = False
+                self._add_update_log(
+                    "ℹ 关注范围K线已是最新，跳过 K 线拉取（资金流/市值等仍继续检查）"
+                )
+            elif last_update_date >= target_date:
+                # 日志显示已更新，但实际覆盖不足：强制回看最近 15 天补齐
+                effective_last_update = (
+                    datetime.strptime(target_date, '%Y-%m-%d') - timedelta(days=15)
+                ).strftime('%Y-%m-%d')
+                self._add_update_log(
+                    f"⚠ K线覆盖不足，强制从 {effective_last_update} 回补到 {target_date}"
+                )
+            self._set_update_progress(18, "准备更新K线")
             
             # 【第5步】更新K线数据
-            if not update_types or 'kline' in update_types:
+            if do_kline:
                 self._add_update_log("【第5步】更新K线数据...")
+                self._check_update_control()
                 try:
-                    # 创建 KlineUpdater 实例
                     stock_data_fetcher = StockDataFetcher()
                     kline_updater = KlineUpdater(self.db_manager, stock_data_fetcher)
-                    
-                    # 执行K线数据更新（TickFlow 批量接口，一次请求全批次）
+
+                    def kline_progress(percent, message):
+                        self._check_update_control()
+                        self._set_update_progress(18 + int(percent * 0.45), message)
+
                     kline_result = kline_updater.update_kline_data(
                         stock_codes=stock_codes,
-                        last_update_date=last_update_date,
+                        last_update_date=effective_last_update,
                         target_date=target_date,
-                        batch_size=100  # TickFlow API每批最大100只股票
+                        batch_size=100,
+                        progress_callback=kline_progress,
+                        control_callback=self._check_update_control,
                     )
-                    
-                    # 更新统计信息
+
                     with self.update_lock:
                         self.update_status['totalStats']['kline_added'] = kline_result.get('added', 0)
                         self.update_status['totalStats']['kline_updated'] = kline_result.get('updated', 0)
                         self.update_status['totalStats']['kline_failed'] = kline_result.get('failed', 0)
-                    
-                    # 记录结果
+
                     if kline_result['success']:
-                        self._add_update_log(f"✓ K线数据更新完成: 新增 {kline_result['added']} 条，更新 {kline_result['updated']} 条，失败 {kline_result['failed']} 条，耗时 {kline_result['total_time']:.1f}秒")
-                        
-                        # 如果数据源尚未就绪，直接退出整个更新流程
+                        self._add_update_log(
+                            f"✓ K线数据更新完成: 新增 {kline_result['added']} 条，"
+                            f"更新 {kline_result['updated']} 条，失败 {kline_result['failed']} 条，"
+                            f"耗时 {kline_result['total_time']:.1f}秒"
+                        )
                         if '数据源尚未就绪' in kline_result.get('message', ''):
-                            self._add_update_log(f"⚠ 数据源尚未就绪，跳过本次更新（不执行资金流向更新）")
-                            logger.info(f"数据源尚未就绪，跳过本次更新")
-                            # 标记更新完成（虽然被跳过，但仍是一个合法的完成状态）
-                            # 否则前端会因 status='running' 而一直显示"更新中"
-                            self.update_status['status'] = 'completed'
-                            self.update_status['skipped'] = True
-                            self.update_status['end_time'] = datetime.now().isoformat()
-                            self.update_status['message'] = '数据源尚未就绪，已跳过本次更新'
+                            self._add_update_log("⚠ 数据源尚未就绪，跳过本次更新（不执行资金流向更新）")
+                            logger.info("数据源尚未就绪，跳过本次更新")
+                            self._set_update_progress(100, "数据源尚未就绪，已跳过本次更新")
+                            with self.update_lock:
+                                self.update_status['status'] = 'completed'
+                                self.update_status['skipped'] = True
+                                self.update_status['end_time'] = datetime.now().isoformat()
+                                self.update_status['message'] = '数据源尚未就绪，已跳过本次更新'
                             return
-                
+                        if kline_result.get('failed', 0) > 1000:
+                            self.update_status['critical_failure'] = True
+                    else:
+                        self.update_status['critical_failure'] = True
+                        self._add_update_log(f"✗ K线数据更新失败: {kline_result.get('message', '未知错误')}")
+
+                except UpdateCancelled:
+                    raise
                 except Exception as e:
+                    self.update_status['critical_failure'] = True
                     self._add_update_log(f"✗ K线数据更新异常: {str(e)}")
                     logger.error(f"K线数据更新异常: {str(e)}")
                     with self.update_lock:
                         self.update_status['totalStats']['kline_failed'] = len(stock_codes)
+            else:
+                self._add_update_log("ℹ K线已是最新，跳过 K 线步骤")
+            self._set_update_progress(63, "K线步骤完成")
             
             # 【第6步】更新资金流向数据
-            if not update_types or 'fund_flow' in update_types:
+            if do_fund:
                 self._add_update_log("【第6步】更新资金流向数据...")
+                self._check_update_control()
                 try:
-                    # 创建 FundFlowUpdater 实例
                     fund_flow_fetcher = FundFlowFetcher(self.db_manager)
                     fund_flow_updater = FundFlowUpdater(self.db_manager, fund_flow_fetcher)
-                    
-                    # 执行资金流向数据更新
+
+                    def fund_progress(percent, message):
+                        self._check_update_control()
+                        self._set_update_progress(65 + int(percent * 0.10), message)
+
                     fund_flow_result = fund_flow_updater.update_fund_flow_data(
-                        last_update_date=last_update_date,
-                        target_date=target_date
+                        last_update_date=effective_last_update,
+                        target_date=target_date,
+                        stock_codes=stock_codes if scope == 'watched' else None,
+                        progress_callback=fund_progress,
+                        control_callback=self._check_update_control,
                     )
                     
                     # 更新统计信息
@@ -925,47 +1179,66 @@ class DataCollectionService:
                     if fund_flow_result['success']:
                         self._add_update_log(f"✓ 资金流向数据更新完成: 新增 {fund_flow_result['added']} 条，更新 {fund_flow_result['updated']} 条，失败 {fund_flow_result['failed']} 条，耗时 {fund_flow_result['total_time']:.1f}秒")
                     else:
+                        self.update_status['critical_failure'] = True
                         self._add_update_log(f"✗ 资金流向数据更新失败: {fund_flow_result.get('message', '未知错误')}")
                         logger.warning(f"资金流向数据更新失败: {fund_flow_result.get('message', '未知错误')}")
-                
+
+                except UpdateCancelled:
+                    raise
                 except Exception as e:
+                    self.update_status['critical_failure'] = True
                     self._add_update_log(f"✗ 资金流向数据更新异常: {str(e)}")
                     logger.error(f"资金流向数据更新异常: {str(e)}")
                     with self.update_lock:
                         self.update_status['totalStats']['fund_flow_failed'] = 1
+            else:
+                self._add_update_log("ℹ 本次不更新资金流向（updateTypes 未包含）")
+            self._set_update_progress(75, "资金流步骤完成")
             
             # 【第7步】更新股票市值信息
-            self._add_update_log("【第7步】更新股票市值信息...")
-            try:
-                # 创建 StockDataFetcher 实例
-                stock_data_fetcher = StockDataFetcher()
-                
-                # 执行市值数据更新
-                market_cap_result = stock_data_fetcher.update_stock_market_cap(
-                    db_manager=self.db_manager,
-                    max_retries=3
-                )
-                
-                # 更新统计信息
-                with self.update_lock:
-                    self.update_status['totalStats']['market_cap_updated'] = market_cap_result.get('updated', 0)
-                    self.update_status['totalStats']['market_cap_failed'] = market_cap_result.get('failed', 0)
-                
-                # 记录结果
-                if market_cap_result['updated'] > 0:
-                    self._add_update_log(f"✓ 股票市值更新完成: 更新 {market_cap_result['updated']} 只，失败 {market_cap_result['failed']} 只")
-                else:
-                    self._add_update_log(f"⚠ 股票市值更新: 更新 {market_cap_result['updated']} 只，失败 {market_cap_result['failed']} 只")
-                    logger.warning(f"股票市值更新: 更新 {market_cap_result['updated']} 只，失败 {market_cap_result['failed']} 只")
-            
-            except Exception as e:
-                self._add_update_log(f"✗ 股票市值更新异常: {str(e)}")
-                logger.error(f"股票市值更新异常: {str(e)}")
-                with self.update_lock:
-                    self.update_status['totalStats']['market_cap_failed'] = len(stock_codes)
-            
+            if do_market_cap:
+                self._add_update_log("【第7步】更新股票市值信息...")
+                self._check_update_control()
+                try:
+                    stock_data_fetcher = StockDataFetcher()
+
+                    # 关注范围模式只更新目标股票，避免全市场更新
+                    market_cap_result = stock_data_fetcher.update_stock_market_cap(
+                        db_manager=self.db_manager,
+                        stock_codes=stock_codes if scope == 'watched' else None,
+                        max_retries=3
+                    )
+
+                    with self.update_lock:
+                        self.update_status['totalStats']['market_cap_updated'] = market_cap_result.get('updated', 0)
+                        self.update_status['totalStats']['market_cap_failed'] = market_cap_result.get('failed', 0)
+
+                    if market_cap_result['updated'] > 0:
+                        self._add_update_log(
+                            f"✓ 股票市值更新完成: 更新 {market_cap_result['updated']} 只，"
+                            f"失败 {market_cap_result['failed']} 只"
+                        )
+                    else:
+                        self._add_update_log(
+                            f"⚠ 股票市值更新: 更新 {market_cap_result['updated']} 只，"
+                            f"失败 {market_cap_result['failed']} 只"
+                        )
+                        logger.warning("股票市值更新: 未更新任何股票")
+                except UpdateCancelled:
+                    raise
+                except Exception as e:
+                    self._add_update_log(f"✗ 股票市值更新异常: {str(e)}")
+                    logger.error(f"股票市值更新异常: {str(e)}")
+                    with self.update_lock:
+                        self.update_status['totalStats']['market_cap_failed'] = len(stock_codes)
+            else:
+                self._add_update_log("ℹ 本次不更新股票市值（updateTypes 未包含）")
+            self._set_update_progress(78, "市值步骤完成")
+
             # 【第8步】刷新减持计划缓存（离线批量拉取候选池，落盘本地缓存）
             self._add_update_log("【第8步】刷新减持计划缓存...")
+            self._check_update_control()
+            self._set_update_progress(80, "刷新减持计划缓存")
             try:
                 from trading.reduce_plan_cache import refresh_reduce_plan_cache
                 # 读取候选池股票代码（结构：pool[].stock.stock_code）
@@ -981,6 +1254,8 @@ class DataCollectionService:
                                 pool_codes.append(sc)
                     except Exception as pe:
                         logger.warning("读取候选池失败: %s", pe)
+                if pool_codes and scope == 'watched':
+                    pool_codes = [code for code in pool_codes if code in set(stock_codes)]
                 if pool_codes:
                     # 目标更新日期 YYYY-MM-DD 转 YYYYMMDD 作为刷新日期
                     score_dt = target_date.replace('-', '')
@@ -993,36 +1268,32 @@ class DataCollectionService:
                     )
                 else:
                     self._add_update_log("ℹ 候选池为空，跳过减持计划缓存刷新")
+            except UpdateCancelled:
+                raise
             except Exception as e:
                 self._add_update_log(f"⚠ 减持计划缓存刷新异常(不影响其他步骤): {str(e)}")
                 logger.warning(f"减持计划缓存刷新异常: {str(e)}")
+            self._set_update_progress(84, "减持计划缓存完成")
 
-            # 【第9步】记录更新完成
-            self._add_update_log("【第9步】记录更新完成...")
-            try:
-                # 汇总统计信息
-                stats = {
-                    'new_stock_detected': self.update_status['totalStats']['new_stock_detected'],
-                    'new_stock_initialized': self.update_status['totalStats']['new_stock_initialized'],
-                    'kline_added': self.update_status['totalStats']['kline_added'],
-                    'kline_updated': self.update_status['totalStats']['kline_updated'],
-                    'fund_flow_added': self.update_status['totalStats']['fund_flow_added'],
-                    'fund_flow_updated': self.update_status['totalStats']['fund_flow_updated'],
-                    'market_cap_updated': self.update_status['totalStats']['market_cap_updated'],
-                    'market_cap_failed': self.update_status['totalStats']['market_cap_failed']
-                }
-                
-                # 记录更新完成
-                validator.record_update_complete(target_date, stats)
-                
-                self._add_update_log("✓ 更新统计信息已记录")
-            
-            except Exception as e:
-                self._add_update_log(f"✗ 记录更新完成失败: {str(e)}")
-                logger.error(f"记录更新完成失败: {str(e)}")
-            
+            # 【第9步】汇总更新统计
+            self._add_update_log("【第9步】汇总更新统计...")
+            stats = {
+                'new_stock_detected': self.update_status['totalStats']['new_stock_detected'],
+                'new_stock_initialized': self.update_status['totalStats']['new_stock_initialized'],
+                'kline_added': self.update_status['totalStats']['kline_added'],
+                'kline_updated': self.update_status['totalStats']['kline_updated'],
+                'fund_flow_added': self.update_status['totalStats']['fund_flow_added'],
+                'fund_flow_updated': self.update_status['totalStats']['fund_flow_updated'],
+                'market_cap_updated': self.update_status['totalStats']['market_cap_updated'],
+                'market_cap_failed': self.update_status['totalStats']['market_cap_failed'],
+            }
+            self._add_update_log("✓ 统计信息已汇总（最终完成记录在全部步骤后写入一次）")
+            self._set_update_progress(86, "统计信息已汇总")
+
             # 【第10步】计算并保存市场温度
-            self._add_update_log("【第9步】计算并保存市场温度...")
+            self._add_update_log("【第10步】计算并保存市场温度...")
+            self._check_update_control()
+            self._set_update_progress(90, "计算市场温度")
             try:
                 # 导入市场温度计算器
                 from utils.market_temperature import MarketTemperature, DataNotAvailableError
@@ -1056,7 +1327,9 @@ class DataCollectionService:
                 logger.warning(f"市场温度计算失败: {str(e)}")
             
             # 【第11步】计算并保存风控状态
-            self._add_update_log("【第10步】计算并保存风控状态...")
+            self._add_update_log("【第11步】计算并保存风控状态...")
+            self._check_update_control()
+            self._set_update_progress(94, "计算风控状态")
             try:
                 from utils.risk_controller import RiskController
                 
@@ -1086,7 +1359,9 @@ class DataCollectionService:
                 logger.warning(f"风控状态计算失败: {str(e)}")
             
             # 【第12步】计算并保存全A指数ADX（市场趋势强度，与温度同批次产出）
-            self._add_update_log("【第11步】计算并保存全A指数ADX...")
+            self._add_update_log("【第12步】计算并保存全A指数ADX...")
+            self._check_update_control()
+            self._set_update_progress(98, "计算全A指数ADX")
             try:
                 from utils.market_index_adx import MarketIndexADX, DataNotAvailableError
                 from trading.market_index_adx_dao import MarketIndexADXDAO
@@ -1114,107 +1389,115 @@ class DataCollectionService:
                 self._add_update_log(f"⚠ 全A指数ADX计算失败: {str(e)}")
                 logger.warning(f"全A指数ADX计算失败: {str(e)}")
             
-            # 检查是否有数据被成功更新
-            total_added = self.update_status['totalStats']['kline_added'] + self.update_status['totalStats']['fund_flow_added']
-            total_updated = self.update_status['totalStats']['kline_updated'] + self.update_status['totalStats']['fund_flow_updated']
+            # 汇总结果并做更严格的最终状态判定
+            total_added = (
+                self.update_status['totalStats']['kline_added']
+                + self.update_status['totalStats']['fund_flow_added']
+            )
+            total_updated = (
+                self.update_status['totalStats']['kline_updated']
+                + self.update_status['totalStats']['fund_flow_updated']
+            )
             total_success = total_added + total_updated
-            total_failed = self.update_status['totalStats']['kline_failed'] + self.update_status['totalStats']['fund_flow_failed']
-            
-            # 更新任务状态
+            total_failed = (
+                self.update_status['totalStats']['kline_failed']
+                + self.update_status['totalStats']['fund_flow_failed']
+            )
+            critical_failure = bool(self.update_status.get('critical_failure'))
+            already_latest = bool(self.update_status.get('already_latest'))
+
             with self.update_lock:
-                # 如果失败数量超过1000，标记为失败（即使有成功的数据）
-                if total_failed > 1000:
-                    self.update_status['status'] = 'failed'
-                    self.update_status['end_time'] = datetime.now().isoformat()
-                    self.update_status['message'] = f'更新失败: 失败股票数量({total_failed})超过1000，请重新更新'
+                if self.update_cancel_event.is_set():
+                    self.update_status['status'] = 'cancelled'
+                    self.update_status['message'] = '更新已取消'
                     self.update_status['success'] = 0
-                elif total_success > 0:
-                    # 有数据被成功更新，标记为完成
+                elif critical_failure or total_failed > 1000:
+                    self.update_status['status'] = 'failed'
+                    self.update_status['message'] = (
+                        f'更新失败: 关键步骤失败或失败股票数({total_failed})超过1000'
+                    )
+                    self.update_status['success'] = 0
+                elif already_latest or total_success > 0:
                     self.update_status['status'] = 'completed'
-                    self.update_status['end_time'] = datetime.now().isoformat()
-                    self.update_status['message'] = '更新完成'
+                    self.update_status['message'] = (
+                        '数据已是最新' if already_latest and total_success == 0 else '更新完成'
+                    )
                     self.update_status['success'] = 1
                 else:
-                    # 没有数据被成功更新，标记为失败
                     self.update_status['status'] = 'failed'
-                    self.update_status['end_time'] = datetime.now().isoformat()
                     self.update_status['message'] = '更新失败: 没有数据被成功更新'
-            
-            if total_failed > 1000:
-                self._add_update_log(f"✗ 更新任务失败: 失败股票数量({total_failed})超过1000")
-                logger.warning(f"更新任务 {task_id} 失败: 失败股票数量({total_failed})超过1000")
-            elif total_success > 0:
-                self._add_update_log("✓ 更新任务完成")
-                logger.info(f"更新任务 {task_id} 完成")
-            else:
-                self._add_update_log("✗ 更新任务失败: 没有数据被成功更新")
-                logger.warning(f"更新任务 {task_id} 失败: 没有数据被成功更新")
-            
-            # 记录更新完成或失败
-            if validator and target_date:
-                try:
-                    if total_failed <= 1000 and total_success > 0:
-                        validator.record_update_complete(target_date, stats)
-                    else:
-                        if total_failed > 1000:
-                            validator.record_update_failed(target_date, f'失败股票数量({total_failed})超过1000')
-                        else:
-                            validator.record_update_failed(target_date, '没有数据被成功更新')
-                except Exception as log_e:
-                    logger.error(f"记录更新状态失败: {str(log_e)}")
-            
-        except Exception as e:
-            # 检查是否有数据被成功更新
-            total_added = self.update_status['totalStats']['kline_added'] + self.update_status['totalStats']['fund_flow_added']
-            total_updated = self.update_status['totalStats']['kline_updated'] + self.update_status['totalStats']['fund_flow_updated']
-            total_success = total_added + total_updated
-            total_failed = self.update_status['totalStats']['kline_failed'] + self.update_status['totalStats']['fund_flow_failed']
-            
-            with self.update_lock:
-                # 如果失败数量超过1000，标记为失败（即使有成功的数据）
-                if total_failed > 1000:
-                    self.update_status['status'] = 'failed'
-                    self.update_status['end_time'] = datetime.now().isoformat()
-                    self.update_status['message'] = f'更新失败: 失败股票数量({total_failed})超过1000，请重新更新'
                     self.update_status['success'] = 0
-                elif total_success > 0:
-                    # 有数据被成功更新，标记为完成
-                    self.update_status['status'] = 'completed'
-                    self.update_status['end_time'] = datetime.now().isoformat()
-                    self.update_status['message'] = f'更新完成（部分步骤失败）: {str(e)}'
-                    self.update_status['success'] = 1
-                else:
-                    # 没有数据被成功更新，标记为失败
-                    self.update_status['status'] = 'failed'
-                    self.update_status['end_time'] = datetime.now().isoformat()
-                    self.update_status['message'] = f'更新失败: {str(e)}'
-            
-            if total_failed > 1000:
-                self._add_update_log(f"✗ 更新任务失败: 失败股票数量({total_failed})超过1000")
-                logger.warning(f"更新任务 {task_id} 失败: 失败股票数量({total_failed})超过1000")
-            elif total_success > 0:
-                self._add_update_log(f"✓ 更新任务完成（部分步骤失败）: {str(e)}")
-                logger.warning(f"更新任务 {task_id} 完成（部分步骤失败）: {str(e)}")
+                self.update_status['end_time'] = datetime.now().isoformat()
+                self.update_status['progress'] = 100
+
+            self._add_update_log(
+                f"{'✓' if self.update_status['status'] == 'completed' else '✗'} "
+                f"更新任务结束: {self.update_status['message']} "
+                f"(成功 {total_success}, 失败 {total_failed})"
+            )
+            if self.update_status['status'] == 'completed':
+                logger.info(f"更新任务 {task_id} 完成: {self.update_status['message']}")
             else:
-                self._add_update_log(f"✗ 错误: {str(e)}")
-                logger.error(f"更新任务 {task_id} 失败: {str(e)}")
-            
-            # 记录更新完成或失败
+                logger.warning(f"更新任务 {task_id} 失败/取消: {self.update_status['message']}")
+
+            # 完成记录只写一次，避免重复追加 _all.jsonl
             if validator and target_date:
                 try:
-                    if total_failed <= 1000 and total_success > 0:
+                    if self.update_status['status'] == 'completed':
                         validator.record_update_complete(target_date, stats)
-                    else:
-                        if total_failed > 1000:
-                            validator.record_update_failed(target_date, f'失败股票数量({total_failed})超过1000')
-                        else:
-                            validator.record_update_failed(target_date, str(e))
+                    elif self.update_status['status'] == 'failed':
+                        validator.record_update_failed(target_date, self.update_status['message'])
                 except Exception as log_e:
                     logger.error(f"记录更新状态失败: {str(log_e)}")
-        
+
+        except UpdateCancelled:
+            with self.update_lock:
+                self.update_status['status'] = 'cancelled'
+                self.update_status['message'] = '更新已取消'
+                self.update_status['success'] = 0
+                self.update_status['end_time'] = datetime.now().isoformat()
+                self.update_status['running'] = False
+            self._add_update_log("✕ 更新任务已取消")
+            logger.info(f"更新任务 {task_id} 已取消")
+
+        except Exception as e:
+            total_added = (
+                self.update_status['totalStats']['kline_added']
+                + self.update_status['totalStats']['fund_flow_added']
+            )
+            total_updated = (
+                self.update_status['totalStats']['kline_updated']
+                + self.update_status['totalStats']['fund_flow_updated']
+            )
+            total_success = total_added + total_updated
+            total_failed = (
+                self.update_status['totalStats']['kline_failed']
+                + self.update_status['totalStats']['fund_flow_failed']
+            )
+
+            with self.update_lock:
+                if self.update_cancel_event.is_set():
+                    self.update_status['status'] = 'cancelled'
+                    self.update_status['message'] = '更新已取消'
+                else:
+                    self.update_status['status'] = 'failed'
+                    self.update_status['message'] = f'更新失败: {str(e)}'
+                self.update_status['success'] = 0
+                self.update_status['end_time'] = datetime.now().isoformat()
+
+            self._add_update_log(f"✗ 更新任务失败: {str(e)}")
+            logger.error(f"更新任务 {task_id} 失败: {str(e)}")
+
+            if validator and target_date and not self.update_cancel_event.is_set():
+                try:
+                    validator.record_update_failed(target_date, str(e))
+                except Exception as log_e:
+                    logger.error(f"记录更新失败状态失败: {str(log_e)}")
+
         finally:
             with self.update_lock:
                 self.update_status['running'] = False
+                self.update_status['paused'] = False
     
     def get_update_progress(self) -> Dict[str, Any]:
         """
@@ -1236,6 +1519,11 @@ class DataCollectionService:
         return {
             'running': self.update_status['running'],
             'status': self.update_status['status'],
+            'paused': self.update_status.get('paused', False),
+            'progress': self.update_status.get('progress', 0),
+            'currentTask': self.update_status.get('current_task', ''),
+            'scope': self.update_status.get('scope', 'watched'),
+            'alreadyLatest': self.update_status.get('already_latest', False),
             'skipped': self.update_status.get('skipped', False),  # 是否因数据源未就绪被跳过
             'message': self.update_status['message'],
             'startTime': self.update_status['start_time'],
@@ -1260,14 +1548,15 @@ class DataCollectionService:
                 'message': '没有正在运行的更新任务'
             }
         
-        # 标记为取消
-        self.update_status['running'] = False
+        # 协作式取消：设置事件，由工作线程在步骤/批次边界退出
+        self.update_cancel_event.set()
+        self.update_pause_event.clear()
         self.update_status['paused'] = False
         self.update_status['message'] = '更新已取消'
         self.update_status['status'] = 'cancelled'
-        self._add_update_log("✕ 更新任务已取消")
+        self._add_update_log("✕ 已发出取消信号，等待当前批次结束")
         
-        logger.info("更新任务已取消")
+        logger.info("更新任务取消信号已发出")
         
         return {
             'success': True,

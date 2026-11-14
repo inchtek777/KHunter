@@ -133,7 +133,8 @@ class DataInitializer:
     # ==================== K线数据初始化 ====================
     
     def _init_kline_history_data(self, stock_codes: list, years: int = 3,
-                                  progress_range: tuple = (0, 100)) -> None:
+                                  progress_range: tuple = (0, 100),
+                                  force_full: bool = False) -> None:
         """
         初始化K线历史数据
 
@@ -158,8 +159,8 @@ class DataInitializer:
         except Exception:
             has_existing_data = False
 
-        if has_existing_data:
-            # 已有数据 → 委派给 KlineUpdater 增量更新（与日常更新流程一致）
+        if has_existing_data and not force_full:
+            # 已有数据且未强制全量 → 委派给 KlineUpdater 增量更新（与日常更新流程一致）
             logger.info("=" * 60)
             logger.info(f"检测到已有K线数据，执行增量更新 | 股票: {total} 只")
             logger.info("=" * 60)
@@ -514,7 +515,7 @@ class DataInitializer:
     
     def init_full_data(self, max_stocks: Optional[int] = None, years: int = 3,
                        incremental: bool = False, stock_dict: dict = None,
-                       stock_codes: list = None) -> None:
+                       stock_codes: list = None, force_full_kline: bool = False) -> None:
         """
         统一的初始化入口，支持全量和增量两种模式
         
@@ -594,7 +595,8 @@ class DataInitializer:
             # 2. 初始化K线历史数据（内部会按批次回调）
             self._report_progress(stages[1], f"正在获取K线数据（{years}年）...")
             self._init_kline_history_data(stock_codes, years=years,
-                                          progress_range=(stages[1], stages[2]))
+                                          progress_range=(stages[1], stages[2]),
+                                          force_full=force_full_kline)
             self._report_progress(stages[2], "K线数据初始化完成")
             
             # 3. 初始化行业数据

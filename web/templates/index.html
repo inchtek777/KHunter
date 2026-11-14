@@ -550,43 +550,19 @@
                     <!-- 步骤1：选择初始化范围 -->
                     <div id="init-step1" class="card" style="display: block;">
                         <div class="card-body">
-                            <!-- 初始化选项 -->
-                            <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
-                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 12px; background: #f9fafb; border-radius: 6px; border: 2px solid #e5e7eb; transition: all 0.2s;">
-                                    <input type="checkbox" id="init-basic-data" checked style="width: 20px; height: 20px; cursor: pointer;">
-                                    <div>
-                                        <div style="font-weight: 600; color: #1f2937;">基础股票数据</div>
-                                        <div style="font-size: 12px; color: #6b7280;">股票代码、名称、行业等基础信息</div>
-                                    </div>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 12px; background: #f9fafb; border-radius: 6px; border: 2px solid #e5e7eb; transition: all 0.2s;">
-                                    <input type="checkbox" id="init-history-data" checked style="width: 20px; height: 20px; cursor: pointer;">
-                                    <div>
-                                        <div style="font-weight: 600; color: #1f2937;">历史行情数据</div>
-                                        <div style="font-size: 12px; color: #6b7280;">股票的日线行情数据</div>
-                                    </div>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 12px; background: #f9fafb; border-radius: 6px; border: 2px solid #e5e7eb; transition: all 0.2s;">
-                                    <input type="checkbox" id="init-industry-data" checked style="width: 20px; height: 20px; cursor: pointer;">
-                                    <div>
-                                        <div style="font-weight: 600; color: #1f2937;">行业数据</div>
-                                        <div style="font-size: 12px; color: #6b7280;">行业分类和行业资金流向数据</div>
-                                    </div>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 12px; background: #f9fafb; border-radius: 6px; border: 2px solid #e5e7eb; transition: all 0.2s;">
-                                    <input type="checkbox" id="init-sector-data" checked style="width: 20px; height: 20px; cursor: pointer;">
-                                    <div>
-                                        <div style="font-weight: 600; color: #1f2937;">板块数据</div>
-                                        <div style="font-size: 12px; color: #6b7280;">板块分类和板块资金流向数据</div>
-                                    </div>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 12px; background: #f9fafb; border-radius: 6px; border: 2px solid #e5e7eb; transition: all 0.2s;">
-                                    <input type="checkbox" id="init-fund-flow-data" checked style="width: 20px; height: 20px; cursor: pointer;">
-                                    <div>
-                                        <div style="font-weight: 600; color: #1f2937;">资金流向数据</div>
-                                        <div style="font-size: 12px; color: #6b7280;">个股资金流向数据（30个交易日）</div>
-                                    </div>
-                                </label>
+                            <!-- 初始化范围（收敛为关注行业及成分股） -->
+                            <div class="init-scope-box">
+                                <div class="init-scope-title">🎯 初始化范围</div>
+                                <div class="init-scope-main">已关注行业 + 行业成分股</div>
+                                <ul class="init-scope-list">
+                                    <li>关注行业指数：最近 <strong>10 年</strong></li>
+                                    <li>成分股基础信息：代码、名称、市值</li>
+                                    <li>成分股历史行情：最近 <strong>3 年</strong>日K</li>
+                                </ul>
+                                <div id="init-scope-summary" class="init-scope-note">正在读取关注行业...</div>
+                                <div class="init-scope-note">
+                                    不再全市场抓取；未关注任何行业时，请先到「行业数据」页添加关注。
+                                </div>
                             </div>
 
                             <!-- 操作按钮 -->
@@ -642,7 +618,19 @@
                     <div id="update-initial-state" class="card">
                         <div class="card-body" style="text-align: center; padding: 60px 20px;">
                             <p style="font-size: 14px; color: #6b7280; margin: 0 0 10px 0;">上次更新时间</p>
-                            <h2 id="last-update-time" style="font-size: 24px; font-weight: 600; color: #1f2937; margin: 0 0 30px 0;">-</h2>
+                            <h2 id="last-update-time" style="font-size: 24px; font-weight: 600; color: #1f2937; margin: 0 0 24px 0;">-</h2>
+
+                            <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px;">
+                                <label style="font-size: 13px; color: #374151; font-weight: 500;">更新范围</label>
+                                <select id="update-scope" class="group-select">
+                                    <option value="watched" selected>关注行业及成分股</option>
+                                    <option value="all">全市场</option>
+                                </select>
+                            </div>
+                            <p id="update-scope-hint" style="font-size: 12px; color: #6b7280; margin: 0 0 24px 0;">
+                                只更新已关注行业及其成分股；关注行业为空时请先到「行业数据」页添加。
+                            </p>
+
                             <button class="btn btn-primary" id="update-start-btn" onclick="startDataUpdate()" style="font-size: 14px; padding: 10px 24px;">
                                 ▶️ 开始更新
                             </button>
@@ -695,12 +683,20 @@
 
                     <!-- 更新进行中：显示进度 -->
                     <div id="update-progress-state" class="card" style="display: none;">
-                        <div class="card-body" style="text-align: center; padding: 60px 20px;">
-                            <div style="font-size: 48px; margin-bottom: 20px; animation: pulse 1.5s infinite;">⏳</div>
-                            <p style="font-size: 16px; color: #6b7280; margin: 0 0 30px 0;">正在更新数据，请稍候...</p>
-                            
-                            <!-- 取消按钮 -->
-                            <button class="btn btn-danger" onclick="cancelDataUpdate()">✕ 取消</button>
+                        <div class="card-body" style="padding: 30px 24px;">
+                            <div class="update-progress-head">
+                                <span id="update-current-task">准备更新...</span>
+                                <span id="update-progress-pct">0%</span>
+                            </div>
+                            <div class="update-progress-track">
+                                <div class="update-progress-bar" id="update-progress-bar"></div>
+                            </div>
+                            <ul id="update-logs" class="update-logs"></ul>
+                            <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+                                <button class="btn btn-secondary" id="update-pause-btn" onclick="pauseDataUpdate()">⏸ 暂停</button>
+                                <button class="btn btn-secondary" id="update-resume-btn" onclick="resumeDataUpdate()" style="display: none;">▶️ 恢复</button>
+                                <button class="btn btn-danger" onclick="cancelDataUpdate()">✕ 取消</button>
+                            </div>
                         </div>
                     </div>
 
@@ -2059,67 +2055,76 @@
                         </div>
                     </div>
 
-                    <!-- 行业板块列表 -->
+                    <!-- 关注行业 / 行业板块：Tab 切换（关注行业在最左） -->
                     <div class="card">
-                        <div class="card-header" style="gap: 12px; flex-wrap: wrap;">
-                            <h3>🏭 行业板块 <span id="industry-source-label" class="text-muted" style="font-size: 12px; font-weight: normal;">行业指数</span></h3>
-                            <div class="industry-toolbar">
-                                <input type="text" id="industry-search" class="search-input" placeholder="搜索行业代码或名称..." autocomplete="off">
-                                <button class="btn btn-secondary" id="industry-refresh-btn" type="button">刷新行业列表</button>
-                            </div>
+                        <div class="industry-tabs" role="tablist">
+                            <button class="industry-tab active" data-industry-tab="watched" type="button" role="tab" aria-selected="true">
+                                ⭐ 关注行业
+                            </button>
+                            <button class="industry-tab" data-industry-tab="board" type="button" role="tab" aria-selected="false">
+                                🏭 行业板块
+                            </button>
                         </div>
-                        <div class="table-container">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>代码</th>
-                                        <th>行业名称</th>
-                                        <th>最新价</th>
-                                        <th>涨跌幅</th>
-                                        <th>换手率</th>
-                                        <th>上涨/下跌</th>
-                                        <th>领涨股</th>
-                                        <th>操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="industry-list-tbody">
-                                    <tr><td colspan="8" class="loading">加载中...</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-                        <div id="industry-list-status" class="industry-status"></div>
-                    </div>
 
-                    <!-- 关注行业 + 日K拉取 -->
-                    <div class="card">
-                        <div class="card-header" style="gap: 12px; flex-wrap: wrap;">
-                            <h3>⭐ 关注行业</h3>
-                            <div class="industry-toolbar">
-                                <label class="industry-date-label">起始 <input type="date" id="industry-start-date"></label>
-                                <label class="industry-date-label">结束 <input type="date" id="industry-end-date"></label>
-                                <button class="btn btn-primary" id="industry-fetch-all-btn" type="button">拉取全部日K</button>
+                        <div id="industry-tab-watched" class="industry-tab-panel active">
+                            <div class="industry-tab-toolbar">
+                                <div class="industry-toolbar">
+                                    <label class="industry-date-label">起始 <input type="date" id="industry-start-date"></label>
+                                    <label class="industry-date-label">结束 <input type="date" id="industry-end-date"></label>
+                                    <button class="btn btn-primary" id="industry-fetch-all-btn" type="button">拉取全部日K</button>
+                                </div>
                             </div>
+                            <div class="table-container">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>代码</th>
+                                            <th>行业名称</th>
+                                            <th>数据源</th>
+                                            <th>最新日期</th>
+                                            <th>日K条数</th>
+                                            <th>最新收盘</th>
+                                            <th>最新涨跌幅</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="industry-watched-tbody">
+                                        <tr><td colspan="8" class="loading">加载中...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="industry-fetch-status" class="industry-status"></div>
                         </div>
-                        <div class="table-container">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>代码</th>
-                                        <th>行业名称</th>
-                                        <th>数据源</th>
-                                        <th>最新日期</th>
-                                        <th>日K条数</th>
-                                        <th>最新收盘</th>
-                                        <th>最新涨跌幅</th>
-                                        <th>操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="industry-watched-tbody">
-                                    <tr><td colspan="8" class="loading">加载中...</td></tr>
-                                </tbody>
-                            </table>
+
+                        <div id="industry-tab-board" class="industry-tab-panel">
+                            <div class="industry-tab-toolbar">
+                                <div class="industry-toolbar">
+                                    <input type="text" id="industry-search" class="search-input" placeholder="搜索行业代码或名称..." autocomplete="off">
+                                    <button class="btn btn-secondary" id="industry-refresh-btn" type="button">刷新行业列表</button>
+                                    <span id="industry-source-label" class="text-muted" style="font-size: 12px;">行业指数</span>
+                                </div>
+                            </div>
+                            <div class="table-container">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>代码</th>
+                                            <th>行业名称</th>
+                                            <th>最新价</th>
+                                            <th>涨跌幅</th>
+                                            <th>换手率</th>
+                                            <th>上涨/下跌</th>
+                                            <th>领涨股</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="industry-list-tbody">
+                                        <tr><td colspan="8" class="loading">加载中...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="industry-list-status" class="industry-status"></div>
                         </div>
-                        <div id="industry-fetch-status" class="industry-status"></div>
                     </div>
 
                     <!-- 行业日K明细 -->
@@ -2132,7 +2137,11 @@
                                 <button class="btn btn-secondary btn-small" id="industry-detail-close-btn" type="button">收起</button>
                             </div>
                         </div>
-                        <div class="table-container" style="max-height: 480px; overflow-y: auto;">
+                        <div class="industry-kline-wrap">
+                            <div id="industry-kline-chart" class="industry-kline-chart"></div>
+                        </div>
+                        <div id="industry-kline-legend" class="industry-kline-legend"></div>
+                        <div class="table-container" style="max-height: 300px; overflow-y: auto; margin-top: 12px;">
                             <table class="data-table">
                                 <thead>
                                     <tr>
@@ -2511,11 +2520,11 @@
     </div>
 
     <script src="/static/js/dashboard_stats.js"></script>
-    <script type="module" src="/static/js/app.js?v=23"></script>
+    <script type="module" src="/static/js/app.js?v=26"></script>
     <script src="/static/js/kline_chart.js"></script>
-    <script src="/static/js/init_simple.js?v=2"></script>
+    <script src="/static/js/init_simple.js?v=3"></script>
     <script src="/static/js/trading.js"></script>
-    <script src="/static/js/data_update.js"></script>
+    <script src="/static/js/data_update.js?v=2"></script>
     
     <!-- 回测结果模态框 -->
     <div id="backtest-result-modal" class="modal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4);">

@@ -54,7 +54,9 @@ class KlineUpdater:
             'percentage': 0
         }
 
-    def update_kline_data(self, stock_codes: List[str], last_update_date: str, target_date: str, batch_size: int = 100) -> Dict:
+    def update_kline_data(self, stock_codes: List[str], last_update_date: str, target_date: str,
+                          batch_size: int = 100, progress_callback=None,
+                          control_callback=None) -> Dict:
         """
         增量更新K线数据
 
@@ -147,6 +149,10 @@ class KlineUpdater:
             self.progress['total'] = len(stock_codes)
             
             for batch_idx in range(0, len(stock_codes), batch_size):
+                # 协作式取消/暂停检查（位于批次边界，避免取消后继续拉取下一批）
+                if control_callback:
+                    control_callback()
+
                 # 获取该批股票
                 batch_codes = stock_codes[batch_idx:batch_idx + batch_size]
                 batch_num = batch_idx // batch_size + 1
@@ -155,7 +161,18 @@ class KlineUpdater:
                 # 更新进度
                 self.progress['current'] = min(batch_idx + batch_size, len(stock_codes))
                 self.progress['percentage'] = int((self.progress['current'] / self.progress['total']) * 100)
-                
+
+                if progress_callback:
+                    try:
+                        progress_callback(
+                            self.progress['percentage'],
+                            f"K线批次 {batch_num}/{total_batches} "
+                            f"({self.progress['current']}/{self.progress['total']})",
+                        )
+                    except Exception:
+                        # 控制类异常（取消/暂停）需要向上传递
+                        raise
+
                 logger.info(f"批次 {batch_num}/{total_batches}: TickFlow 处理 {len(batch_codes)} 只股票 [{self.progress['current']}/{self.progress['total']}] {self.progress['percentage']}%")
                 
                 try:

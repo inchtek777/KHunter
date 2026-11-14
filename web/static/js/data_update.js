@@ -100,6 +100,17 @@ function resetUpdateUI() {
         // 隐藏完成状态
         const completedState = document.getElementById('update-completed-state');
         if (completedState) completedState.style.display = 'none';
+
+        const bar = document.getElementById('update-progress-bar');
+        if (bar) bar.style.width = '0%';
+        const pct = document.getElementById('update-progress-pct');
+        if (pct) pct.textContent = '0%';
+        const logs = document.getElementById('update-logs');
+        if (logs) logs.innerHTML = '';
+        const pauseBtn = document.getElementById('update-pause-btn');
+        if (pauseBtn) pauseBtn.style.display = 'inline-block';
+        const resumeBtn = document.getElementById('update-resume-btn');
+        if (resumeBtn) resumeBtn.style.display = 'none';
     } catch (error) {
         console.error('重置更新 UI 时出错:', error);
     }
@@ -118,15 +129,16 @@ async function startDataUpdate() {
             return;
         }
         
-        console.log('发送请求到后端...');
-        
+        const scope = document.getElementById('update-scope')?.value || 'watched';
+        console.log('发送请求到后端... 范围:', scope);
+
         // 调用后端API启动更新
         const response = await fetch('/api/data/update/start', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({})
+            body: JSON.stringify({ scope })
         });
         
         const result = await response.json();
@@ -219,16 +231,63 @@ async function getUpdateProgress() {
  */
 function updateProgressUI(data) {
     try {
-        // 简洁版本：只显示"正在更新中"，不显示进度条
-        // 但在控制台输出详细信息用于调试
+        const pct = Math.max(0, Math.min(100, Number(data.progress) || 0));
+        const bar = document.getElementById('update-progress-bar');
+        if (bar) bar.style.width = `${pct}%`;
+        const pctText = document.getElementById('update-progress-pct');
+        if (pctText) pctText.textContent = `${pct}%`;
+        const task = document.getElementById('update-current-task');
+        if (task) task.textContent = data.currentTask || data.message || '更新中...';
+
+        const logs = document.getElementById('update-logs');
+        if (logs && Array.isArray(data.logs)) {
+            logs.innerHTML = data.logs
+                .slice(-20)
+                .map((line) => `<li>${line}</li>`)
+                .join('');
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        const pauseBtn = document.getElementById('update-pause-btn');
+        const resumeBtn = document.getElementById('update-resume-btn');
+        const paused = data.status === 'paused' || data.paused === true;
+        if (pauseBtn) pauseBtn.style.display = paused ? 'none' : 'inline-block';
+        if (resumeBtn) resumeBtn.style.display = paused ? 'inline-block' : 'none';
+
         console.log('更新进度:', {
             status: data.status,
             progress: data.progress,
+            currentTask: data.currentTask,
             message: data.message,
-            totalStats: data.totalStats
         });
     } catch (error) {
         console.error('更新进度 UI 时出错:', error);
+    }
+}
+
+/**
+ * 暂停更新
+ */
+async function pauseDataUpdate() {
+    try {
+        const response = await fetch('/api/data/update/pause', { method: 'POST' });
+        const result = await response.json();
+        if (!result.success) alert('暂停失败: ' + (result.message || '未知错误'));
+    } catch (error) {
+        alert('暂停失败: ' + error.message);
+    }
+}
+
+/**
+ * 恢复更新
+ */
+async function resumeDataUpdate() {
+    try {
+        const response = await fetch('/api/data/update/resume', { method: 'POST' });
+        const result = await response.json();
+        if (!result.success) alert('恢复失败: ' + (result.message || '未知错误'));
+    } catch (error) {
+        alert('恢复失败: ' + error.message);
     }
 }
 

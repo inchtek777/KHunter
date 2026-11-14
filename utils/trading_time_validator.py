@@ -130,7 +130,7 @@ class TradingTimeValidator:
 
         return self._get_last_trading_day(today_str)
 
-    def validate_update_time(self) -> Tuple[bool, str, str]:
+    def validate_update_time(self, check_updated: bool = True) -> Tuple[bool, str, str]:
         """
         验证当前时间是否允许更新
         
@@ -185,10 +185,11 @@ class TradingTimeValidator:
                 return False, "无法确定有效的目标更新日期", ""
             logger.info(f"目标日期非交易日，调整目标更新日期为: {target_date}")
         
-        # 检查是否已在目标日期更新过
-        is_updated, error_msg = self._check_if_updated(target_date)
-        if is_updated:
-            return False, error_msg, target_date
+        # 检查是否已在目标日期更新过（调用方可跳过，改用实际数据覆盖判断）
+        if check_updated:
+            is_updated, error_msg = self._check_if_updated(target_date)
+            if is_updated:
+                return False, error_msg, target_date
         
         return True, "", target_date
     
