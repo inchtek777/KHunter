@@ -191,3 +191,6 @@ start.zip
 /restore_*.py
 /verify_*.py
 /test_*.py
+
+# Local virtualenv (created for this workspace run)
+.venv/
